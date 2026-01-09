@@ -66,6 +66,15 @@ export function EditableNoteCard({ note, onEdit, onDelete, currentUser }) {
 
   return (
     <div className={`border rounded-lg p-4 ${statusStyle.className} transition-all hover:shadow-md`}>
+      {/* Tipo de Documento - Badge destacado */}
+      {note.note_type && (
+        <div className="mb-3">
+          <span className="inline-flex items-center gap-1 px-3 py-1.5 bg-gradient-to-r from-purple-100 to-blue-100 border-2 border-purple-300 text-purple-800 font-bold text-sm rounded-lg shadow-sm">
+            📋 {note.note_type}
+          </span>
+        </div>
+      )}
+
       {/* Header con estado de edición */}
       <div className="flex justify-between items-start mb-3">
         <div className="flex items-center gap-2">
@@ -92,12 +101,10 @@ export function EditableNoteCard({ note, onEdit, onDelete, currentUser }) {
 
       {/* Contenido de la nota */}
       <div className="mb-3">
-        <p className="text-gray-800 leading-relaxed">{note.note}</p>
-        {note.note_type && (
-          <span className="inline-block mt-2 px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">
-            {note.note_type}
-          </span>
-        )}
+        <div className="bg-gray-50 border-l-4 border-blue-500 p-3 rounded">
+          <p className="text-sm text-gray-500 font-semibold mb-1">Contenido:</p>
+          <p className="text-gray-800 leading-relaxed whitespace-pre-wrap">{note.note}</p>
+        </div>
       </div>
 
       {/* Advertencia de tiempo limitado */}
@@ -152,9 +159,16 @@ export function EditableNoteCard({ note, onEdit, onDelete, currentUser }) {
             <div className="flex justify-between items-center mb-4">
               <div>
                 <h3 className="text-xl font-bold">Editar Nota de Enfermería</h3>
+                {note.note_type && (
+                  <div className="mt-2">
+                    <span className="inline-flex items-center gap-1 px-3 py-1 bg-purple-100 border border-purple-300 text-purple-800 font-bold text-sm rounded">
+                      📋 Tipo: {note.note_type}
+                    </span>
+                  </div>
+                )}
                 {note.patient_name && (
-                  <p className="text-sm text-blue-700 mt-1">
-                    Paciente: <span className="font-semibold">{note.patient_name}</span>
+                  <p className="text-sm text-blue-700 mt-2">
+                    👤 Paciente: <span className="font-semibold">{note.patient_name}</span>
                     {note.patient_room && <span className="text-gray-500"> • Cuarto {note.patient_room}</span>}
                   </p>
                 )}
