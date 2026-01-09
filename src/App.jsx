@@ -85,7 +85,6 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
 
   // Estados locales para formularios de la Zona de Cuidados
   const [selectedPatientId, setSelectedPatientId] = useState('');
-  const [newCondition, setNewCondition] = useState('');
 
   // Atajos de teclado para mejorar usabilidad
   useKeyboardShortcuts({
@@ -232,19 +231,6 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
       alert("❌ Error al registrar tratamiento: " + (error.message || error)); 
     }
   }, [selectedPatientId, user.name]);
-
-  const handleConditionUpdate = useCallback(async () => {
-    if (!selectedPatientId) return;
-    const selectEl = document.querySelector('select[class*="flex-1 p-2.5"]');
-    const conditionValue = selectEl?.value;
-    if (!conditionValue) return;
-    const patient = patients.find(p => p.id == selectedPatientId);
-    if (!patient) return;
-    try {
-      await updatePatient(patient.id, { ...patient, condition: conditionValue });
-      alert(`✅ Estado clínico actualizado a: ${conditionValue}`);
-    } catch (error) { console.error(error); alert("Error al actualizar estado."); }
-  }, [selectedPatientId, patients, updatePatient]);
 
   // --- GESTIÓN DE HABITACIONES ---
   
@@ -462,13 +448,15 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
                 </td>
                 <td className="px-6 py-4 text-right">
                   <div className="flex items-center justify-end gap-2">
-                    <button 
-                      onClick={() => openBedModal(patient)}
-                      className="inline-flex items-center gap-1 px-3 py-2 bg-purple-600 text-white text-sm font-bold rounded-lg hover:bg-purple-700 transition shadow-sm"
-                      title="Asignar/Cambiar Habitación"
-                    >
-                      <Building2 size={16} />
-                    </button>
+                    {user.role !== 'nurse' && (
+                      <button 
+                        onClick={() => openBedModal(patient)}
+                        className="inline-flex items-center gap-1 px-3 py-2 bg-purple-600 text-white text-sm font-bold rounded-lg hover:bg-purple-700 transition shadow-sm"
+                        title="Asignar/Cambiar Habitación (Solo Admin/Doctor)"
+                      >
+                        <Building2 size={16} />
+                      </button>
+                    )}
                     <button 
                       onClick={() => openDischargeModal(patient)}
                       className="inline-flex items-center gap-1 px-3 py-2 bg-green-600 text-white text-sm font-bold rounded-lg hover:bg-green-700 transition shadow-sm"
@@ -545,23 +533,20 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
                 </div>
               </div>
 
-              {/* Actualizar Estado */}
+              {/* Mostrar Estado (Solo Lectura) */}
               <div className="p-4 bg-white border-2 border-hospital-100 rounded-2xl">
                 <label className="block text-xs font-bold text-hospital-500 uppercase mb-2">Condición Clínica</label>
-                <div className="flex gap-2">
-                  <select 
-                    className="flex-1 p-2.5 bg-hospital-50 border border-hospital-200 rounded-xl text-sm font-bold text-hospital-700 outline-none"
-                    value={newCondition || selectedPatient.condition}
-                    onChange={(e) => setNewCondition(e.target.value)}
-                  >
-                    <option value="Estable">🟢 Estable</option>
-                    <option value="Crítico">🔴 Crítico</option>
-                    <option value="Recuperación">🔵 Recuperación</option>
-                    <option value="Observación">🟡 Observación</option>
-                  </select>
-                  <button onClick={handleConditionUpdate} className="bg-hospital-900 text-white p-2.5 rounded-xl hover:bg-black transition shadow-sm">
-                    <Save size={20} />
-                  </button>
+                <div className="p-3 bg-hospital-50 border border-hospital-200 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-hospital-700">
+                      {selectedPatient.condition === 'Crítico' && '🔴 Crítico'}
+                      {selectedPatient.condition === 'Estable' && '🟢 Estable'}
+                      {selectedPatient.condition === 'Recuperación' && '🔵 Recuperación'}
+                      {selectedPatient.condition === 'Observación' && '🟡 Observación'}
+                      {!['Crítico', 'Estable', 'Recuperación', 'Observación'].includes(selectedPatient.condition) && selectedPatient.condition}
+                    </span>
+                    <span className="text-xs text-gray-500 font-medium">📋 Solo lectura</span>
+                  </div>
                 </div>
               </div>
             </div>
