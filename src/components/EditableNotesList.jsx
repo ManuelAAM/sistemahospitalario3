@@ -72,6 +72,12 @@ export function EditableNoteCard({ note, onEdit, onDelete, currentUser }) {
           <span className="text-lg">{statusStyle.icon}</span>
           <div>
             <p className="font-bold text-gray-800">{note.nurseName || note.nurse_name}</p>
+            {note.patient_name && (
+              <p className="text-sm font-semibold text-blue-700">
+                👤 Paciente: {note.patient_name} 
+                {note.patient_room && <span className="text-gray-500"> • Cuarto {note.patient_room}</span>}
+              </p>
+            )}
             <p className="text-sm text-gray-600">
               {formatCreationTime(note.created_at)}
             </p>
@@ -144,7 +150,15 @@ export function EditableNoteCard({ note, onEdit, onDelete, currentUser }) {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-bold">Editar Nota de Enfermería</h3>
+              <div>
+                <h3 className="text-xl font-bold">Editar Nota de Enfermería</h3>
+                {note.patient_name && (
+                  <p className="text-sm text-blue-700 mt-1">
+                    Paciente: <span className="font-semibold">{note.patient_name}</span>
+                    {note.patient_room && <span className="text-gray-500"> • Cuarto {note.patient_room}</span>}
+                  </p>
+                )}
+              </div>
               <div className="flex items-center gap-2 text-amber-600">
                 <Clock size={16} />
                 <span className="text-sm font-bold">{editStatus.timeLeft}</span>

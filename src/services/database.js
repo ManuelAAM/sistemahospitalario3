@@ -1779,7 +1779,16 @@ export async function getTreatments() {
 
 export async function getNurseNotes() {
   const db = await initDatabase();
-  const notes = await db.select('SELECT *, nurse_name as nurseName FROM nurse_notes ORDER BY created_at DESC');
+  const notes = await db.select(`
+    SELECT 
+      n.*, 
+      n.nurse_name as nurseName,
+      p.name as patient_name,
+      p.room as patient_room
+    FROM nurse_notes n
+    LEFT JOIN patients p ON n.patient_id = p.id
+    ORDER BY n.created_at DESC
+  `);
   
   // Agregar información de editabilidad
   const { checkEditTimeLimit } = await import('../utils/editTimeValidation.js');
