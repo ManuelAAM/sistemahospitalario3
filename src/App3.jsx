@@ -1,5 +1,4 @@
 import ErrorBoundary from './components/ErrorBoundary';
-import NurseScheduleModal from './components/NurseScheduleModal';
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Calendar, Clock, User, FileText, Activity, Users, Pill, 
@@ -58,7 +57,7 @@ const StatCard = ({ title, value, icon: Icon, colorName, subtext }) => {
 
 // --- DASHBOARD PRINCIPAL DE ENFERMERÍA ---
 
-const NurseDashboard = ({ user, onLogout, notify }) => {
+const NurseDashboard = ({ user, onLogout }) => {
   const [activeTab, setActiveTab] = useState('overview');
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
@@ -70,13 +69,12 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
   const [dischargeModalOpen, setDischargeModalOpen] = useState(false);
   const [dischargePatient, setDischargePatient] = useState(null);
   const [inventoryModalOpen, setInventoryModalOpen] = useState(false);
-  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   
   // Hooks de Base de Datos con filtrado por enfermero
   const { patients, updatePatient, loading: patientsLoading } = usePatients({
     nurseId: user.id,
-    role: user.role
-    // NO filtrar por turno - mostrar todos los pacientes asignados
+    role: user.role,
+    shift: currentShift
   });
   const { appointments } = useAppointments();
   const { treatments, addTreatment: addTreatmentDB } = useTreatments();
@@ -136,31 +134,22 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
       return;
     }
     
+    const now = new Date();
     try {
       console.log('💊 Guardando medicamento...', med);
-      
-      // Crear fecha y hora de aplicación
-      let applicationDateTime = '';
-      if (med.applicationDate && med.applicationTime) {
-        applicationDateTime = `${med.applicationDate} ${med.applicationTime}`;
-      } else {
-        const now = new Date();
-        applicationDateTime = now.toLocaleString('es-MX');
-      }
-      
       await addTreatmentDB({
         patientId: parseInt(selectedPatientId),
         medication: med.medication,
         dose: med.dose,
         frequency: med.frequency,
         notes: '',
-        startDate: med.applicationDate || new Date().toLocaleDateString('es-MX'),
+        startDate: now.toLocaleDateString('es-MX'),
         appliedBy: user.name,
-        lastApplication: applicationDateTime,
+        lastApplication: now.toLocaleString('es-MX'),
       });
       console.log('✅ Medicamento guardado correctamente');
       const { formatMessage } = await import('./utils/systemMessages.js');
-      alert(formatMessage('MSG_05', `${med.medication} - Dosis: ${med.dose}\n📅 Aplicado: ${applicationDateTime}`));
+      alert(formatMessage('MSG_05', `${med.medication} - Dosis: ${med.dose} - Frecuencia: ${med.frequency}`));
     } catch (error) { 
       console.error('❌ Error al guardar medicamento:', error);
       alert("❌ Error al registrar medicamento: " + (error.message || error)); 
@@ -223,7 +212,7 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
         treatment.materials || '',
         treatment.duration ? `Duración: ${treatment.duration}` : '',
         'Completado',
-        'Completado'
+        'active'
       ]);
       console.log('✅ Tratamiento guardado correctamente');
       alert(`✅ Tratamiento registrado: ${treatment.treatmentType}\n${treatment.description}`);
@@ -320,7 +309,7 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
                 🔒 Vista Filtrada por Asignación
               </p>
               <p className="text-xs text-blue-700">
-                Visualizas <strong>{patients.length} paciente(s)</strong> asignados a ti en todos tus turnos.
+                Solo visualizas los <strong>{patients.length} paciente(s)</strong> asignados a tu turno <strong>{currentShift}</strong>.
                 Los demás pacientes del hospital están protegidos por privacidad de asignación.
               </p>
             </div>
@@ -330,7 +319,7 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
       
       {/* Tarjetas de Estadísticas */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatCard title="Pacientes Asignados" value={patients.length} icon={Users} colorName="blue" subtext="Todos tus turnos" />
+        <StatCard title="Pacientes Asignados" value={patients.length} icon={Users} colorName="blue" subtext={`Turno ${currentShift}`} />
         <StatCard title="Críticos" value={patients.filter(p => p.condition === 'Crítico').length} icon={AlertCircle} colorName="red" subtext="Atención Inmediata" />
         <StatCard title="Medicamentos" value={treatments.length} icon={Pill} colorName="emerald" subtext="Activos hoy" />
         <StatCard title="Citas" value={appointments.length} icon={Calendar} colorName="purple" subtext="Programadas" />
@@ -395,6 +384,13 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
             <Users size={20} className="text-clinical-primary" />
             Directorio de Pacientes Asignados (ECU-03)
         </h3>
+        <button
+          onClick={() => setPatientRegModalOpen(true)}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-lg transition shadow-sm"
+        >
+          <UserPlus size={18} />
+          Nuevo Paciente
+        </button>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-left">
@@ -403,23 +399,17 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
               <th className="px-6 py-4">Paciente</th>
               <th className="px-6 py-4">Triaje</th>
               <th className="px-6 py-4">Ubicación</th>
-              <th className="px-6 py-4">Médico / Tratamiento</th>
+              <th className="px-6 py-4">Diagnóstico</th>
               <th className="px-6 py-4">Estado</th>
               <th className="px-6 py-4 text-right">Acciones</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-hospital-100">
-            {patients.map((patient) => {
-              const patientTreatments = treatments.filter(t => t.patient_id === patient.id || t.patientId === patient.id);
-              const activeTreatment = patientTreatments.find(t => t.status === 'Activo') || patientTreatments[0];
-              
-              return (
+            {patients.map((patient) => (
               <tr key={patient.id} className="hover:bg-blue-50/50 transition-colors">
                 <td className="px-6 py-4">
                   <div className="font-bold text-hospital-900">{patient.name}</div>
                   <div className="text-xs text-hospital-500">{patient.age} años | {patient.bloodType}</div>
-                  {patient.diagnosis && <div className="text-xs text-hospital-600 mt-1">{patient.diagnosis}</div>}
-                  {patient.allergies && <div className="text-xs text-red-500 font-bold mt-1">⚠️ {patient.allergies}</div>}
                 </td>
                 <td className="px-6 py-4">
                   <TriageBadge 
@@ -433,24 +423,9 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
                     <Building2 size={16} className="text-hospital-400"/> {patient.room}
                   </div>
                 </td>
-                <td className="px-6 py-4">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-1.5 text-sm">
-                      <User size={14} className="text-blue-500"/>
-                      <span className="font-bold text-hospital-800">
-                        {patient.primary_doctor || activeTreatment?.responsible_doctor || 'Sin asignar'}
-                      </span>
-                    </div>
-                    {activeTreatment && (
-                      <div className="flex items-center gap-1.5 text-xs text-hospital-600">
-                        <Pill size={12} className="text-emerald-500"/>
-                        <span>{activeTreatment.medication} • {activeTreatment.dose}</span>
-                      </div>
-                    )}
-                    {!activeTreatment && (
-                      <div className="text-xs text-hospital-400 italic">Sin tratamiento activo</div>
-                    )}
-                  </div>
+                <td className="px-6 py-4 text-sm text-hospital-600">
+                  {patient.diagnosis || 'En valoración'}
+                  {patient.allergies && <div className="text-xs text-red-500 font-bold mt-1">⚠️ {patient.allergies}</div>}
                 </td>
                 <td className="px-6 py-4">
                   <span className={`px-3 py-1 rounded-full text-xs font-bold border 
@@ -485,7 +460,7 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
                   </div>
                 </td>
               </tr>
-            )})}
+            ))}
           </tbody>
         </table>
       </div>
@@ -579,7 +554,6 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
         <div className="xl:col-span-2">
           <CareFormGroup 
             selectedPatient={selectedPatient}
-            patientTreatments={treatments.filter(t => t.patient_id === selectedPatient.id || t.patientId === selectedPatient.id)}
             onVitalSubmit={handleVitalSubmit}
             onMedicationSubmit={handleMedicationSubmit}
             onNoteSubmit={handleNoteSubmit}
@@ -624,7 +598,7 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
           ].map(item => (
             <button
               key={item.id}
-              onClick={item.onClick || (() => setActiveTab(item.id))}
+              onClick={() => setActiveTab(item.id)}
               className={`w-full flex items-center gap-3 px-4 py-3.5 rounded-xl transition-all font-bold text-sm ${
                 activeTab === item.id 
                   ? 'bg-clinical-primary text-white shadow-lg shadow-clinical-primary/20 translate-x-1' 
@@ -762,17 +736,11 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
                 </div>
               )}
               
-              {/* SECCIÓN ACTUALIZADA: Botón de Horario */}
-              <button 
-                onClick={() => setScheduleModalOpen(true)}
-                className="hidden md:flex flex-col items-start bg-hospital-50 px-4 py-1.5 rounded-xl border border-hospital-200 hover:bg-blue-50 hover:border-blue-200 hover:shadow-md transition-all cursor-pointer group text-left"
-                title="Ver cronograma detallado"
-              >
-                  <span className="text-[10px] font-black text-hospital-400 uppercase tracking-wider group-hover:text-blue-500 transition-colors">Horario</span>
-                  <span className="text-xs font-bold text-hospital-700 group-hover:text-blue-700">
-                    {user.shift?.start || '00:00'} - {user.shift?.end || '00:00'}
-                  </span>
-              </button>
+              <div className="hidden md:block bg-hospital-50 px-4 py-2 rounded-xl border border-hospital-200 text-xs font-bold text-hospital-600 uppercase tracking-wide">
+                  Turno: {user.shift?.start || '00:00'} - {user.shift?.end || '00:00'}
+              </div>
+            </div>
+          </div>
           
           {/* Breadcrumbs para navegación contextual */}
           <Breadcrumbs items={[
@@ -788,8 +756,6 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
                      'Sistema'
             }
           ]} />
-          </div> {/* ✅ cierra flex items-center gap-2 */}
-          </div>   {/* ✅ cierra flex justify-between items-start */}
         </header>
 
         <div className="p-6 md:p-8 flex-1">
@@ -845,7 +811,6 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
           setShowTour(false);
         }}
       />
-
       
       <KeyboardShortcuts
         isOpen={showKeyboardHelp}
@@ -863,17 +828,6 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
         ]}
       />
 
-
-      {/* Modal de Horario Detallado */}
-      <NurseScheduleModal 
-        isOpen={scheduleModalOpen} 
-        onClose={() => setScheduleModalOpen(false)} 
-        user={user}
-      />
-      
-      {/* ... aquí siguen tus otros modales (BedManagementModal, etc.) ... */}
-
-
       {/* Modal de Gestión de Habitaciones */}
       <BedManagementModal
         isOpen={bedModalOpen}
@@ -890,7 +844,6 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
       <PatientRegistrationForm
         isOpen={patientRegModalOpen}
         onClose={() => setPatientRegModalOpen(false)}
-        currentUser={user}
         onPatientAdded={() => {
           setPatientRegModalOpen(false);
           // Recargar lista de pacientes
@@ -923,7 +876,6 @@ const NurseDashboard = ({ user, onLogout, notify }) => {
     </div>
   );
 };
-
 
 // --- PUNTO DE ENTRADA (APP) ---
 
@@ -975,12 +927,10 @@ const HospitalManagementSystem = () => {
     const init = async () => {
       try {
         await initializeApp();
+        setTimeout(() => setAppInitialized(true), 1000);
       } catch (err) {
         console.error("Error iniciando app:", err);
-        notify("Error cargando datos. El sistema iniciará en modo limitado.", "warning");
-      } finally {
-        // Esto asegura que la pantalla de carga SIEMPRE se quite
-        setTimeout(() => setAppInitialized(true), 1000);
+        notify("Error de conexión con la base de datos", "error");
       }
     };
     init();
@@ -1021,6 +971,6 @@ const HospitalManagementSystem = () => {
       </div>
     </ErrorBoundary>
   );
-}; // <--- Llave de cierre del componente HospitalManagementSystem
+};
 
-export default HospitalManagementSystem;;
+export default HospitalManagementSystem;

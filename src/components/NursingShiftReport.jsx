@@ -13,8 +13,6 @@ export default function NursingShiftReport({ user, patients }) {
     patientsAssigned: [],
     generalObservations: '',
     incidents: '',
-    pendingTasks: '',
-    handoverNotes: '',
     supervisorName: ''
   });
 
@@ -77,8 +75,8 @@ export default function NursingShiftReport({ user, patients }) {
         INSERT INTO nursing_shift_reports (
           shift_date, shift_type, nurse_id, nurse_name, start_time, 
           patients_assigned, general_observations, incidents, 
-          pending_tasks, handover_notes, supervisor_name, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          supervisor_name, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
         now.toLocaleDateString('es-MX'),
         currentReport.shiftType,
@@ -88,8 +86,6 @@ export default function NursingShiftReport({ user, patients }) {
         JSON.stringify(currentReport.patientsAssigned),
         currentReport.generalObservations,
         currentReport.incidents,
-        currentReport.pendingTasks,
-        currentReport.handoverNotes,
         currentReport.supervisorName,
         'Completado'
       ]);
@@ -102,8 +98,6 @@ export default function NursingShiftReport({ user, patients }) {
         patientsAssigned: [],
         generalObservations: '',
         incidents: '',
-        pendingTasks: '',
-        handoverNotes: '',
         supervisorName: ''
       });
 
@@ -305,43 +299,6 @@ function ReportForm({ report, patients, onPatientToggle, onFieldChange, onSave }
           <p className="text-xs text-orange-600 mt-2 font-medium">
             ⚠️ Los incidentes reportados aquí quedan registrados de forma permanente (NOM-004)
           </p>
-        </div>
-      </div>
-
-      {/* Columna 3: Pendientes y Relevo */}
-      <div className="space-y-6">
-        <div className="bg-white rounded-2xl shadow-sm border border-hospital-200 p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="bg-amber-500 p-2 rounded-lg text-white">
-              <CheckSquare size={20} />
-            </div>
-            <h3 className="font-bold text-hospital-800">Tareas Pendientes</h3>
-          </div>
-
-          <textarea
-            rows="6"
-            placeholder="Procedimientos pendientes, estudios por realizar, medicación por aplicar, valoraciones por completar, etc."
-            className="w-full p-3 bg-hospital-50 border border-hospital-200 rounded-xl font-medium outline-none focus:border-amber-500 transition resize-none"
-            value={report.pendingTasks}
-            onChange={(e) => onFieldChange('pendingTasks', e.target.value)}
-          />
-        </div>
-
-        <div className="bg-white rounded-2xl shadow-sm border border-hospital-200 p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="bg-teal-500 p-2 rounded-lg text-white">
-              <FileText size={20} />
-            </div>
-            <h3 className="font-bold text-hospital-800">Notas de Relevo</h3>
-          </div>
-
-          <textarea
-            rows="6"
-            placeholder="Información importante para el siguiente turno: cambios en pacientes, indicaciones especiales, familiares presentes, etc."
-            className="w-full p-3 bg-hospital-50 border border-hospital-200 rounded-xl font-medium outline-none focus:border-teal-500 transition resize-none"
-            value={report.handoverNotes}
-            onChange={(e) => onFieldChange('handoverNotes', e.target.value)}
-          />
         </div>
 
         {/* Botón Guardar */}

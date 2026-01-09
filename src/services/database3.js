@@ -18,16 +18,12 @@ export async function initDatabase() {
     
     await createTables();
     await seedInitialData();
-    await ensureTriageAssignment();
     
     return db;
   } catch (error) { // <--- AGREGADO: Captura de error
     console.error('❌ Error CRÍTICO de Base de Datos:', error);
-    console.error('Error completo:', JSON.stringify(error, null, 2));
-    console.error('Stack trace:', error?.stack);
     // Esto lanzará el error hacia la interfaz para que salga el aviso rojo
-    const errorMsg = error?.message || error?.toString() || 'Error desconocido al inicializar base de datos';
-    throw new Error(`No se pudo conectar a la base de datos: ${errorMsg}`);
+    throw new Error(`No se pudo conectar a la base de datos: ${error.message}`);
   }
 }
 
@@ -35,16 +31,6 @@ export async function initDatabase() {
 async function createTables() {
   try {
     console.log('🛠️ Creating database tables...');
-    
-    // IMPORTANTE: Forzar recreación de tablas problemáticas
-    try {
-      await db.execute('DROP TABLE IF EXISTS treatments');
-      await db.execute('DROP TABLE IF EXISTS appointments');
-      await db.execute('DROP TABLE IF EXISTS medication_inventory');
-      console.log('🔄 Dropped old tables to recreate with correct schema');
-    } catch (e) {
-      console.log('ℹ️ Tables did not exist yet, proceeding with creation');
-    }
     
     // Tabla de Usuarios
     await db.execute(`
@@ -61,7 +47,7 @@ async function createTables() {
       )
     `);
 
-    // Tabla de Pacientes (CORREGIDA)
+    // Tabla de Pacientes
     await db.execute(`
       CREATE TABLE IF NOT EXISTS patients (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,7 +64,6 @@ async function createTables() {
         blood_type TEXT NOT NULL,
         allergies TEXT,
         diagnosis TEXT,
-        primary_doctor TEXT,  -- <--- ¡ESTA ES LA COLUMNA QUE FALTABA!
         created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -108,11 +93,8 @@ async function createTables() {
         dose TEXT NOT NULL,
         frequency TEXT NOT NULL,
         start_date TEXT NOT NULL,
-        end_date TEXT,
-        applied_by TEXT NOT NULL,
-        last_application TEXT NOT NULL,
-        responsible_doctor TEXT,
-        administration_times TEXT,
+        last_application TEXT,
+        applied_by TEXT,
         status TEXT DEFAULT 'Activo',
         notes TEXT,
         created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -139,14 +121,12 @@ async function createTables() {
       CREATE TABLE IF NOT EXISTS appointments (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         patient_id INTEGER,
-        patient_name TEXT NOT NULL,
         date TEXT NOT NULL,
         time TEXT NOT NULL,
         type TEXT NOT NULL,
         status TEXT NOT NULL,
         doctor TEXT,
-        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (patient_id) REFERENCES patients(id)
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
@@ -433,26 +413,8 @@ export async function seedInitialData() {
   const targetLicense = 'ENF-12345';
   
   // 1. ELIMINAR USUARIO EXISTENTE (Para asegurar que la contraseña se resetee)
-  // Primero borramos todas las relaciones FOREIGN KEY para evitar errores
+  // Borramos intentos fallidos, bloqueos y el usuario mismo.
   try {
-    // Obtener el ID del usuario antes de eliminarlo
-    const userResult = await db.select("SELECT id FROM users WHERE username = ?", [targetUser]);
-    const userId = userResult.length > 0 ? userResult[0].id : null;
-    
-    if (userId) {
-      // Eliminar relaciones con FOREIGN KEY (ignorar si las tablas no existen)
-      try {
-        await db.execute("DELETE FROM patient_assignments WHERE nurse_id = ?", [userId]);
-      } catch (e) { /* Tabla puede no existir aún */ }
-      
-      try {
-        await db.execute("DELETE FROM nursing_shift_reports WHERE nurse_id = ?", [userId]);
-      } catch (e) { /* Tabla puede no existir aún */ }
-      
-      console.log('🧹 Deleted user foreign key relationships');
-    }
-    
-    // Ahora eliminar intentos de login, bloqueos y el usuario
     await db.execute("DELETE FROM login_attempts WHERE username = ?", [targetUser]);
     await db.execute("DELETE FROM account_lockouts WHERE username = ?", [targetUser]);
     await db.execute("DELETE FROM users WHERE username = ? OR license_number = ?", [targetUser, targetLicense]);
@@ -531,190 +493,86 @@ export async function seedInitialData() {
     console.warn('⚠️ Error creating test users:', e.message);
   }
 
-  // 3. Verificar/Crear Pacientes (MASIVAMENTE EXPANDIDO - 50+ pacientes)
+  // 3. Verificar/Crear Pacientes
   const patients = await db.select("SELECT count(*) as count FROM patients");
   if (patients[0].count === 0) {
-      console.log('🌱 Seeding 50+ Patients with extensive data...');
-      const patientData = [
-        // Piso 3 - Medicina Interna (15 pacientes)
-        ['Juan Pérez García', 45, 'PEXJ791015HDFRXN01', '301-A', 'Estable', 'VERDE', '2026-01-05', 'O+', 'Penicilina', 'Neumonía adquirida en comunidad', 'Dr. Fernando Ramírez'],
-        ['María González López', 62, 'GOGM620312MDFNRR04', '302-B', 'Crítico', 'ROJO', '2026-01-06', 'A-', 'Ninguna', 'Post-operatorio cirugía cardiovascular', 'Dr. Carlos Mendoza'],
-        ['Carlos Ruiz Hernández', 28, 'RUCC960523HDFRZR08', '303-A', 'Recuperación', 'AMARILLO', '2026-01-07', 'B+', 'Polen', 'Apendicectomía laparoscópica', 'Dra. Patricia Vega'],
-        ['Ana Martínez Sánchez', 35, 'MASA890215MDFRNN08', '304-A', 'Estable', 'VERDE', '2026-01-06', 'AB+', 'Ninguna', 'Diabetes tipo 2 descompensada', 'Dr. Roberto Castro'],
-        ['Roberto Díaz Torres', 58, 'DITR651120HDFZRB03', '305-A', 'En observación', 'AMARILLO', '2026-01-07', 'O-', 'Sulfas', 'Infarto agudo al miocardio', 'Dr. Carlos Mendoza'],
-        ['Laura Fernández Cruz', 72, 'FECL520408MDFRNR09', '306-B', 'Estable', 'VERDE', '2026-01-05', 'A+', 'Aspirina', 'Fractura de cadera', 'Dr. Miguel Ortega'],
-        ['Pedro Ramírez Ortiz', 41, 'RAOP820930HDFLRD04', '307-A', 'Crítico', 'ROJO', '2026-01-08', 'B-', 'Ninguna', 'Politraumatismo por accidente', 'Dra. Sandra López'],
-        ['Sofia Morales Reyes', 29, 'MORS941112MDFRRF05', '308-A', 'Estable', 'VERDE', '2026-01-07', 'O+', 'Ninguna', 'Parto eutócico - puerperio inmediato', 'Dra. Elena Torres'],
-        ['Miguel Ángel Vargas', 67, 'VARM570625HDFRRG06', '309-B', 'En observación', 'NARANJA', '2026-01-06', 'AB-', 'Yodo', 'Insuficiencia renal crónica', 'Dr. Roberto Castro'],
-        ['Carmen Jiménez Flores', 54, 'JIFC700518MDFLRR07', '310-A', 'Estable', 'VERDE', '2026-01-08', 'A+', 'Ninguna', 'Hipertensión arterial sistémica', 'Dr. Fernando Ramírez'],
-        ['José Luis Castro Ramos', 38, 'CARJ851203HDFSLS08', '311-A', 'Recuperación', 'VERDE', '2026-01-07', 'O+', 'Ninguna', 'Gastritis aguda', 'Dra. Patricia Vega'],
-        ['Patricia Mendoza Silva', 48, 'MESP750822MDFNLT09', '312-B', 'Estable', 'VERDE', '2026-01-06', 'B+', 'Látex', 'Colecistitis aguda', 'Dr. Miguel Ortega'],
-        ['Raúl Ortega Moreno', 33, 'ORMR921009HDFRRL10', '313-A', 'En observación', 'AMARILLO', '2026-01-08', 'A-', 'Ninguna', 'Cetoacidosis diabética', 'Dr. Roberto Castro'],
-        ['Gabriela Soto Vega', 26, 'SOVG970315MDFTVB11', '314-A', 'Estable', 'VERDE', '2026-01-07', 'O+', 'Ninguna', 'Asma bronquial', 'Dr. Fernando Ramírez'],
-        ['Fernando Luna Paredes', 61, 'LUPF621128HDFLRR12', '315-B', 'Crítico', 'ROJO', '2026-01-08', 'B-', 'Ninguna', 'Accidente cerebrovascular isquémico', 'Dra. Sandra López'],
-        
-        // Piso 4 - UCI y Cardiología (15 pacientes)
-        ['Alejandro Torres Guzmán', 55, 'TOGA651015HDFZRJ13', '401-A', 'Crítico', 'ROJO', '2026-01-06', 'O+', 'Ninguna', 'Infarto masivo - UCI', 'Dr. Carlos Mendoza'],
-        ['Elena Vásquez Moreno', 70, 'VAME540203MDFSNL14', '402-B', 'Crítico', 'ROJO', '2026-01-05', 'A-', 'Penicilina', 'Choque séptico - UCI', 'Dra. Sandra López'],
-        ['Rodrigo Silva Castillo', 32, 'SICR911210HDFLSD15', '403-A', 'En observación', 'AMARILLO', '2026-01-07', 'B+', 'Ninguna', 'Post-operatorio neurocirugía', 'Dr. Luis Herrera'],
-        ['Marcela Ramos Cruz', 44, 'RACM791022MDFMSR16', '404-A', 'Estable', 'VERDE', '2026-01-06', 'AB+', 'Ninguna', 'Arritmia supraventricular', 'Dr. Carlos Mendoza'],
-        ['Diego Herrera Jiménez', 29, 'HEJD951118HDFRRG17', '405-B', 'Crítico', 'ROJO', '2026-01-08', 'O-', 'Ninguna', 'Traumatismo craneoencefálico severo', 'Dr. Luis Herrera'],
-        ['Claudia Núñez Peña', 58, 'NUPC661205MDFÑLD18', '406-A', 'Estable', 'VERDE', '2026-01-05', 'A+', 'Aspirina', 'Angina inestable', 'Dr. Carlos Mendoza'],
-        ['Sebastián Morales Torres', 36, 'MOTS870823HDFRBS19', '407-A', 'En observación', 'AMARILLO', '2026-01-07', 'B-', 'Ninguna', 'Pancreatitis aguda', 'Dra. Patricia Vega'],
-        ['Valeria Castañeda López', 42, 'CALV810314MDFSTL20', '408-B', 'Estable', 'VERDE', '2026-01-06', 'O+', 'Ninguna', 'Fibrilación auricular', 'Dr. Carlos Mendoza'],
-        ['Andrés Pacheco Ruiz', 50, 'PARA731208HDFCHN21', '409-A', 'Crítico', 'ROJO', '2026-01-08', 'AB-', 'Sulfas', 'Edema pulmonar agudo', 'Dra. Sandra López'],
-        ['Mónica Salinas Vega', 39, 'SAVM841115MDFSLM22', '410-A', 'Recuperación', 'VERDE', '2026-01-07', 'A-', 'Ninguna', 'Post-cateterismo cardíaco', 'Dr. Carlos Mendoza'],
-        ['Javier Cruz Mendoza', 63, 'CUMJ610429HDFRZV23', '411-B', 'En observación', 'AMARILLO', '2026-01-06', 'B+', 'Yodo', 'Insuficiencia cardíaca congestiva', 'Dr. Carlos Mendoza'],
-        ['Paola Guerrero Santos', 31, 'GUSP920907MDFRRP24', '412-A', 'Estable', 'VERDE', '2026-01-07', 'O+', 'Ninguna', 'Miocarditis viral', 'Dr. Carlos Mendoza'],
-        ['Óscar Domínguez Flores', 47, 'DOFO760619HDFMLR25', '413-A', 'Crítico', 'ROJO', '2026-01-08', 'A+', 'Ninguna', 'Shock cardiogénico', 'Dra. Sandra López'],
-        ['Lorena Aguilar Ramírez', 53, 'AGRL701003MDFGMR26', '414-B', 'Estable', 'VERDE', '2026-01-05', 'B-', 'Látex', 'Hipertensión pulmonar', 'Dr. Carlos Mendoza'],
-        ['Ricardo Flores Herrera', 41, 'FLHR821127HDFRLC27', '415-A', 'En observación', 'AMARILLO', '2026-01-07', 'O-', 'Ninguna', 'Taquicardia ventricular', 'Dr. Carlos Mendoza'],
-
-        // Piso 2 - Pediatría y Ginecología (20 pacientes)
-        ['Isabella Martín López', 8, 'MALI151220MDFNSL28', '201-A', 'Estable', 'VERDE', '2026-01-06', 'O+', 'Ninguna', 'Bronquiolitis', 'Dra. Carmen Rodríguez'],
-        ['Mateo García Santos', 12, 'GASM111015HDFRSN29', '202-A', 'En observación', 'AMARILLO', '2026-01-07', 'A+', 'Penicilina', 'Apendicitis aguda', 'Dr. Jorge Méndez'],
-        ['Sofía Hernández Cruz', 5, 'HECS181030MDFRRF30', '203-B', 'Estable', 'VERDE', '2026-01-05', 'B+', 'Ninguna', 'Gastroenteritis aguda', 'Dra. Carmen Rodríguez'],
-        ['Daniel Torres Morales', 15, 'TOMD081205HDFRMN31', '204-A', 'Crítico', 'ROJO', '2026-01-08', 'O-', 'Ninguna', 'Trauma abdominal por accidente', 'Dr. Jorge Méndez'],
-        ['Camila Ruiz Fernández', 10, 'RUFC131112MDFZML32', '205-A', 'Recuperación', 'VERDE', '2026-01-07', 'AB+', 'Ninguna', 'Post-operatorio amigdalectomía', 'Dr. Jorge Méndez'],
-        ['Alejandro Díaz Vega', 14, 'DIVA091018HDFZLJ33', '206-B', 'Estable', 'VERDE', '2026-01-06', 'A-', 'Aspirina', 'Fractura de antebrazo', 'Dr. Jorge Méndez'],
-        ['Valentina Soto Ramírez', 7, 'SORV160825MDFTML34', '207-A', 'En observación', 'AMARILLO', '2026-01-07', 'B-', 'Ninguna', 'Crisis asmática', 'Dra. Carmen Rodríguez'],
-        ['Santiago López García', 11, 'LOGA120703HDFPNT35', '208-A', 'Estable', 'VERDE', '2026-01-06', 'O+', 'Ninguna', 'Neumonía infantil', 'Dra. Carmen Rodríguez'],
-        ['Emilia Moreno Torres', 6, 'MOTE171115MDFRNM36', '209-B', 'Crítico', 'ROJO', '2026-01-08', 'A+', 'Látex', 'Meningitis bacteriana', 'Dr. Jorge Méndez'],
-        ['Nicolás Herrera Soto', 13, 'HESN100901HDFRTC37', '210-A', 'Estable', 'VERDE', '2026-01-05', 'B+', 'Ninguna', 'Diabetes juvenil', 'Dra. Carmen Rodríguez'],
-        
-        // Ginecología y Obstetricia
-        ['Adriana Castillo Mendoza', 28, 'CAMA951203MDFSTD38', '211-A', 'Estable', 'VERDE', '2026-01-06', 'O+', 'Ninguna', 'Embarazo gemelar 36 SDG', 'Dra. Elena Torres'],
-        ['Fernanda Silva Ruiz', 32, 'SIRF911025MDFLLR39', '212-B', 'En observación', 'AMARILLO', '2026-01-07', 'A-', 'Ninguna', 'Preeclampsia leve', 'Dra. Elena Torres'],
-        ['Carolina Vázquez Flores', 25, 'VAFC981210MDFZLR40', '213-A', 'Estable', 'VERDE', '2026-01-05', 'B+', 'Ninguna', 'Parto prematuro 34 SDG', 'Dra. Elena Torres'],
-        ['Natalia Gómez Castro', 29, 'GOCN940615MDFMST41', '214-A', 'Crítico', 'ROJO', '2026-01-08', 'AB-', 'Penicilina', 'Ruptura uterina - emergencia', 'Dra. Elena Torres'],
-        ['Alejandra Pérez Morales', 35, 'PEMA881122MDFRZL42', '215-B', 'Recuperación', 'VERDE', '2026-01-07', 'O-', 'Ninguna', 'Cesárea por circular de cordón', 'Dra. Elena Torres'],
-        ['Paulina Rojas Jiménez', 27, 'ROJP960408MDFMSL43', '216-A', 'Estable', 'VERDE', '2026-01-06', 'A+', 'Ninguna', 'Embarazo múltiple - trillizos', 'Dra. Elena Torres'],
-        ['Mariana Delgado Sánchez', 33, 'DESM901015MDFLN44', '217-A', 'En observación', 'AMARILLO', '2026-01-07', 'B-', 'Aspirina', 'Diabetes gestacional', 'Dra. Elena Torres'],
-        ['Daniela Ortiz Vega', 26, 'ORVD970312MDFRTD45', '218-B', 'Estable', 'VERDE', '2026-01-05', 'O+', 'Ninguna', 'Embarazo de alto riesgo', 'Dra. Elena Torres'],
-        ['Lucía Ramírez Torres', 30, 'RATL931108MDFMSR46', '219-A', 'Crítico', 'ROJO', '2026-01-08', 'AB+', 'Sulfas', 'Hemorragia post-parto', 'Dra. Elena Torres'],
-        ['Andrea González Moreno', 24, 'GOMA991201MDFNRD47', '220-A', 'Recuperación', 'VERDE', '2026-01-07', 'A-', 'Ninguna', 'Puerperio fisiológico gemelar', 'Dra. Elena Torres']
-      ];
-      
-      for (const p of patientData) {
-        await db.execute(
-          `INSERT INTO patients (name, age, curp, room, condition, triage_level, admission_date, blood_type, allergies, diagnosis, primary_doctor) 
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          p
-        );
-      }
-      console.log(`✅ Created ${patientData.length} patients with comprehensive data`);
+      console.log('🌱 Seeding Patients...');
+      await db.execute(`INSERT INTO patients (name, age, curp, room, condition, triage_level, admission_date, blood_type, allergies, diagnosis) VALUES ('Juan Pérez', 45, 'PEXJ791015HDFRXN01', '301-A', 'Estable', 'VERDE', '2025-10-20', 'O+', 'Penicilina', 'Neumonía')`);
+      await db.execute(`INSERT INTO patients (name, age, curp, room, condition, triage_level, admission_date, blood_type, allergies, diagnosis) VALUES ('María González', 62, 'GOGM620312MDFNRR04', '302-B', 'Crítico', 'ROJO', '2025-10-21', 'A-', 'Ninguna', 'Post-operatorio')`);
+      await db.execute(`INSERT INTO patients (name, age, curp, room, condition, triage_level, admission_date, blood_type, allergies, diagnosis) VALUES ('Carlos Ruiz', 28, 'RUCC960523HDFRZR08', '303-A', 'Recuperación', 'AMARILLO', '2025-10-23', 'B+', 'Polen', 'Apendicectomía')`);
   }
 
-  // 4. Verificar/Crear Signos Vitales (MASIVAMENTE EXPANDIDO - todos los pacientes)
+  // 4. Verificar/Crear Signos Vitales
   const vitals = await db.select("SELECT count(*) as count FROM vital_signs");
   if (vitals[0].count === 0) {
-      console.log('🌱 Seeding Comprehensive Vital Signs for ALL patients...');
-      const pList = await db.select("SELECT id FROM patients ORDER BY id");
+      console.log('🌱 Seeding Vital Signs...');
+      const pList = await db.select("SELECT id FROM patients LIMIT 1");
+      const pId = pList.length > 0 ? pList[0].id : 1;
       
-      if (pList.length > 0) {
-        const vitalRecords = [];
-        
-        // Generar múltiples registros de signos vitales por paciente (simulando evolución)
-        for (let i = 0; i < Math.min(pList.length, 50); i++) {
-          const patientId = pList[i].id;
-          const baseDate = '08/01';
-          
-          // Pacientes críticos - signos vitales cada 2 horas
-          if (i % 7 === 0 || i % 11 === 0) { // Algunos pacientes críticos
-            const criticalSigns = [
-              [patientId, `${baseDate} 06:00`, '38.5', '160/95', '110', '28', 'Enf. Carlos López'],
-              [patientId, `${baseDate} 08:00`, '38.8', '165/98', '115', '30', 'Enf. Laura Martínez'],
-              [patientId, `${baseDate} 10:00`, '39.2', '170/100', '118', '32', 'Enf. Laura Martínez'],
-              [patientId, `${baseDate} 12:00`, '38.9', '162/96', '112', '29', 'Enf. Laura Martínez'],
-              [patientId, `${baseDate} 14:00`, '38.6', '158/94', '108', '27', 'Enf. Ana García'],
-              [patientId, `${baseDate} 16:00`, '38.3', '155/92', '105', '26', 'Enf. Ana García'],
-              [patientId, `${baseDate} 18:00`, '38.0', '150/88', '102', '24', 'Enf. Ana García'],
-              [patientId, `${baseDate} 20:00`, '37.8', '148/86', '98', '23', 'Enf. Carlos López'],
-              [patientId, `${baseDate} 22:00`, '37.5', '145/84', '95', '22', 'Enf. Carlos López']
-            ];
-            vitalRecords.push(...criticalSigns);
-          }
-          // Pacientes en observación - signos vitales cada 4 horas
-          else if (i % 5 === 0) {
-            const observationSigns = [
-              [patientId, `${baseDate} 08:00`, '37.2', '135/85', '88', '22', 'Enf. Laura Martínez'],
-              [patientId, `${baseDate} 12:00`, '37.4', '138/88', '92', '23', 'Enf. Laura Martínez'],
-              [patientId, `${baseDate} 16:00`, '37.1', '132/82', '85', '21', 'Enf. Ana García'],
-              [patientId, `${baseDate} 20:00`, '36.9', '130/80', '82', '20', 'Enf. Carlos López'],
-              [patientId, `${baseDate} 00:00`, '36.8', '128/78', '80', '19', 'Enf. Carlos López']
-            ];
-            vitalRecords.push(...observationSigns);
-          }
-          // Pacientes estables - signos vitales cada 8 horas
-          else {
-            const stableSigns = [
-              [patientId, `${baseDate} 08:00`, '36.6', '120/78', '72', '18', 'Enf. Laura Martínez'],
-              [patientId, `${baseDate} 16:00`, '36.8', '118/76', '70', '17', 'Enf. Ana García'],
-              [patientId, `${baseDate} 00:00`, '36.5', '115/75', '68', '18', 'Enf. Carlos López']
-            ];
-            vitalRecords.push(...stableSigns);
-          }
-          
-          // Pacientes pediátricos (ajustar signos vitales para niños)
-          if (i >= 20 && i <= 29) { // Rango pediátrico
-            const pediatricSigns = [
-              [patientId, `${baseDate} 08:00`, '37.0', '95/60', '100', '24', 'Enf. Carmen Rodríguez'],
-              [patientId, `${baseDate} 14:00`, '37.2', '98/62', '105', '26', 'Enf. Carmen Rodríguez'],
-              [patientId, `${baseDate} 20:00`, '36.8', '92/58', '98', '22', 'Enf. Carmen Rodríguez']
-            ];
-            vitalRecords.push(...pediatricSigns);
-          }
-        }
-        
-        // Insertar todos los signos vitales
-        for (const v of vitalRecords) {
+      const dates = [
+          { d: '24/10 08:00', t: '36.5', bp: '120/80', hr: '72' },
+          { d: '24/10 12:00', t: '37.2', bp: '125/82', hr: '78' },
+          { d: '24/10 16:00', t: '37.8', bp: '130/85', hr: '85' },
+          { d: '24/10 20:00', t: '38.5', bp: '135/88', hr: '92' },
+          { d: '25/10 00:00', t: '37.5', bp: '128/82', hr: '80' },
+          { d: '25/10 04:00', t: '36.8', bp: '122/80', hr: '74' }
+      ];
+
+      for (const v of dates) {
           await db.execute(
-            `INSERT INTO vital_signs (patient_id, date, temperature, blood_pressure, heart_rate, respiratory_rate, registered_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            v
+              `INSERT INTO vital_signs (patient_id, date, temperature, blood_pressure, heart_rate, respiratory_rate, registered_by)
+               VALUES (?, ?, ?, ?, ?, ?, ?)`,
+              [pId, v.d, v.t, v.bp, v.hr, '18', 'Sistema']
           );
-        }
-        
-        console.log(`✅ Created ${vitalRecords.length} comprehensive vital signs records for ${Math.min(pList.length, 50)} patients`);
       }
   }
   
   // 5. Verificar/Crear Asignaciones de Pacientes a Enfermeros
   const assignments = await db.select("SELECT count(*) as count FROM patient_assignments");
   if (assignments[0].count === 0) {
-      console.log('🏥 Seeding Patient Assignments for ALL nurses...');
+      console.log('🌱 Seeding Patient Assignments...');
       
-      try {
-        const nurses = await db.select("SELECT id, name FROM users WHERE role = 'nurse'");
-        const patientsList = await db.select("SELECT id, name, room FROM patients ORDER BY id");
-        
-        if (nurses.length > 0 && patientsList.length > 0) {
-            const today = new Date().toLocaleDateString('es-MX');
-            let assignmentCount = 0;
-            
-            // Asignar pacientes a enfermeros de forma distribuida
-            for (let i = 0; i < patientsList.length; i++) {
-              const patient = patientsList[i];
-              const nurse = nurses[i % nurses.length]; // Distribuir round-robin
-              
+      // Obtener IDs de enfermeros y pacientes
+      const nurses = await db.select("SELECT id, name FROM users WHERE role = 'nurse'");
+      const patientsList = await db.select("SELECT id FROM patients");
+      
+      if (nurses.length > 0 && patientsList.length > 0) {
+          const today = new Date().toLocaleDateString('es-MX');
+          
+          // Asignar pacientes a enfermeros con diferentes turnos
+          // Enfermero 1 (Laura) - Turno Matutino - Paciente 1
+          if (nurses[0] && patientsList[0]) {
               await db.execute(`
-                INSERT INTO patient_assignments (nurse_id, patient_id, assignment_date, shift_type, status, notes)
-                VALUES (?, ?, ?, ?, ?, ?)
-              `, [
-                nurse.id, 
-                patient.id, 
-                today, 
-                ['Matutino', 'Vespertino', 'Nocturno'][i % 3],
-                'Active',
-                `${patient.name} - Asignado a ${nurse.name}`
-              ]);
-              assignmentCount++;
-            }
-            
-            console.log(`✅ Created ${assignmentCount} patient assignments`);
-        }
-      } catch (err) {
-        console.warn('⚠️ Error creating patient assignments (non-critical):', err.message);
+                  INSERT INTO patient_assignments (nurse_id, patient_id, assignment_date, shift_type, status, notes)
+                  VALUES (?, ?, ?, 'Matutino', 'Active', 'Piso 3 - Ala Norte')
+              `, [nurses[0].id, patientsList[0].id, today]);
+          }
+          
+          // Enfermero 1 (Laura) - Turno Vespertino - Paciente 2
+          if (nurses[0] && patientsList[1]) {
+              await db.execute(`
+                  INSERT INTO patient_assignments (nurse_id, patient_id, assignment_date, shift_type, status, notes)
+                  VALUES (?, ?, ?, 'Vespertino', 'Active', 'Piso 3 - Ala Norte')
+              `, [nurses[0].id, patientsList[1].id, today]);
+          }
+          
+          // Enfermero 2 (Carlos) - Turno Nocturno - Paciente 2
+          if (nurses[1] && patientsList[1]) {
+              await db.execute(`
+                  INSERT INTO patient_assignments (nurse_id, patient_id, assignment_date, shift_type, status, notes)
+                  VALUES (?, ?, ?, 'Nocturno', 'Active', 'Piso 2 - Ala Sur')
+              `, [nurses[1].id, patientsList[1].id, today]);
+          }
+          
+          // Enfermero 3 (Ana) - Turno Vespertino - Paciente 3
+          if (nurses[2] && patientsList[2]) {
+              await db.execute(`
+                  INSERT INTO patient_assignments (nurse_id, patient_id, assignment_date, shift_type, status, notes)
+                  VALUES (?, ?, ?, 'Vespertino', 'Active', 'Urgencias')
+              `, [nurses[2].id, patientsList[2].id, today]);
+          }
+          
+          console.log('✅ Patient assignments created');
       }
   }
   
@@ -758,763 +616,7 @@ export async function seedInitialData() {
       
       console.log('✅ Rooms created');
   }
-  
-  // 7. Poblar Inventario de Medicamentos
-  try {
-    console.log('🔍 Checking medication inventory...');
-    const medications = await db.select("SELECT count(*) as count FROM medication_inventory");
-    console.log(`📊 Current medication count: ${medications[0].count}`);
-    
-    if (medications[0].count === 0) {
-        console.log('💊 Seeding Medication Inventory...');
-        const now = new Date().toISOString();
-        
-        const meds = [
-          // ANALGÉSICOS Y ANTIINFLAMATORIOS
-          ['Paracetamol 500mg', 'Paracetamol', 'Tabletas', '500mg', 'ANALGESICO', 0, 500, 'tabletas', 100, 1000, 2.50, 'Distribuidora Farmacéutica México', 'LOTE-001-PARAC', '2027-12-31', 'Farmacia Principal - Estante A1'],
-          ['Ibuprofeno 400mg', 'Ibuprofeno', 'Tabletas', '400mg', 'AINE', 0, 300, 'tabletas', 80, 500, 3.00, 'Distribuidora Farmacéutica México', 'LOTE-002-IBU', '2027-06-30', 'Farmacia Principal - Estante A2'],
-          ['Diclofenaco 75mg/3ml', 'Diclofenaco', 'Ampolletas', '75mg/3ml', 'AINE', 0, 80, 'ampolletas', 20, 150, 8.00, 'Distribuidora Farmacéutica México', 'LOTE-003-DICL', '2027-08-15', 'Farmacia Principal - Estante A3'],
-          ['Ketorolaco 30mg/ml', 'Ketorolaco', 'Ampolletas', '30mg/ml', 'AINE', 0, 60, 'ampolletas', 15, 120, 12.50, 'Laboratorios Farma', 'LOTE-004-KETO', '2026-10-20', 'Farmacia Principal - Estante A4'],
-          ['Naproxeno 250mg', 'Naproxeno', 'Tabletas', '250mg', 'AINE', 0, 200, 'tabletas', 50, 400, 4.50, 'Distribuidora Farmacéutica México', 'LOTE-005-NAPR', '2027-09-30', 'Farmacia Principal - Estante A5'],
-          
-          // ANTIBIÓTICOS
-          ['Amoxicilina 500mg', 'Amoxicilina', 'Cápsulas', '500mg', 'ANTIBIOTICO', 0, 200, 'cápsulas', 50, 400, 5.50, 'Laboratorios Farma', 'Farmacia Principal - Estante B1'],
-          ['Cefalexina 500mg', 'Cefalexina', 'Cápsulas', '500mg', 'ANTIBIOTICO', 0, 150, 'cápsulas', 40, 300, 8.00, 'Laboratorios Farma', 'Farmacia Principal - Estante B2'],
-          ['Azitromicina 500mg', 'Azitromicina', 'Tabletas', '500mg', 'ANTIBIOTICO', 0, 100, 'tabletas', 25, 200, 15.00, 'Distribuidora Especializada', 'Farmacia Principal - Estante B3'],
-          ['Ciprofloxacino 500mg', 'Ciprofloxacino', 'Tabletas', '500mg', 'ANTIBIOTICO', 0, 120, 'tabletas', 30, 250, 12.00, 'Laboratorios Farma', 'Farmacia Principal - Estante B4'],
-          ['Clindamicina 300mg', 'Clindamicina', 'Cápsulas', '300mg', 'ANTIBIOTICO', 0, 80, 'cápsulas', 20, 150, 18.50, 'Distribuidora Especializada', 'Farmacia Principal - Estante B5'],
-          ['Ceftriaxona 1g', 'Ceftriaxona', 'Vial', '1g', 'ANTIBIOTICO', 0, 50, 'viales', 15, 100, 35.00, 'Distribuidora Especializada', 'Farmacia Principal - Estante B6'],
-          
-          // MEDICAMENTOS CARDIOVASCULARES
-          ['Losartán 50mg', 'Losartán', 'Tabletas', '50mg', 'ANTIHIPERTENSIVO', 0, 250, 'tabletas', 60, 400, 4.50, 'Laboratorios Farma', 'Farmacia Principal - Estante D2'],
-          ['Enalapril 10mg', 'Enalapril', 'Tabletas', '10mg', 'ANTIHIPERTENSIVO', 0, 200, 'tabletas', 50, 350, 3.80, 'Distribuidora Farmacéutica México', 'Farmacia Principal - Estante D3'],
-          ['Amlodipino 5mg', 'Amlodipino', 'Tabletas', '5mg', 'ANTIHIPERTENSIVO', 0, 180, 'tabletas', 45, 300, 5.20, 'Laboratorios Farma', 'Farmacia Principal - Estante D4'],
-          ['Atorvastatina 20mg', 'Atorvastatina', 'Tabletas', '20mg', 'HIPOLIPEMIANTE', 0, 150, 'tabletas', 40, 250, 8.90, 'Distribuidora Especializada', 'Farmacia Principal - Estante D5'],
-          ['Carvedilol 25mg', 'Carvedilol', 'Tabletas', '25mg', 'BETABLOQUEADOR', 0, 100, 'tabletas', 25, 200, 12.50, 'Laboratorios Farma', 'Farmacia Principal - Estante D6'],
-          ['Aspirina 100mg', 'Ácido Acetilsalicílico', 'Tabletas', '100mg', 'ANTIAGREGANTE', 0, 300, 'tabletas', 75, 500, 2.80, 'Distribuidora Farmacéutica México', 'Farmacia Principal - Estante D7'],
-          
-          // MEDICAMENTOS PARA DIABETES
-          ['Metformina 850mg', 'Metformina', 'Tabletas', '850mg', 'ANTIDIABETICO', 0, 400, 'tabletas', 100, 600, 3.50, 'Distribuidora Farmacéutica México', 'Farmacia Principal - Estante D1'],
-          ['Glibenclamida 5mg', 'Glibenclamida', 'Tabletas', '5mg', 'ANTIDIABETICO', 0, 200, 'tabletas', 50, 350, 4.20, 'Laboratorios Farma', 'Farmacia Principal - Estante D8'],
-          ['Insulina Glargina 100UI/ml', 'Insulina Glargina', 'Pluma precargada', '100UI/ml', 'ANTIDIABETICO', 0, 30, 'plumas', 10, 50, 450.00, 'Laboratorios Especializados', 'Farmacia - Refrigerador R1'],
-          ['Insulina Lispro 100UI/ml', 'Insulina Lispro', 'Vial', '100UI/ml', 'ANTIDIABETICO', 0, 25, 'viales', 8, 40, 380.00, 'Laboratorios Especializados', 'Farmacia - Refrigerador R2'],
-          
-          // GASTROPROTECTORES Y DIGESTIVOS
-          ['Omeprazol 20mg', 'Omeprazol', 'Cápsulas', '20mg', 'GASTROPROTECTOR', 0, 150, 'cápsulas', 40, 300, 4.00, 'Laboratorios Farma', 'Farmacia Principal - Estante C1'],
-          ['Pantoprazol 40mg', 'Pantoprazol', 'Tabletas', '40mg', 'GASTROPROTECTOR', 0, 120, 'tabletas', 30, 250, 6.50, 'Distribuidora Especializada', 'Farmacia Principal - Estante C2'],
-          ['Ranitidina 150mg', 'Ranitidina', 'Tabletas', '150mg', 'ANTIHISTAMINICO H2', 0, 100, 'tabletas', 25, 200, 5.80, 'Laboratorios Farma', 'Farmacia Principal - Estante C3'],
-          ['Sucralfato 1g', 'Sucralfato', 'Sobres', '1g', 'PROTECTOR GASTRICO', 0, 60, 'sobres', 15, 120, 8.20, 'Distribuidora Especializada', 'Farmacia Principal - Estante C4'],
-          
-          // MEDICAMENTOS CONTROLADOS
-          ['Morfina 10mg/ml', 'Morfina', 'Ampolletas', '10mg/ml', 'OPIOIDE', 1, 50, 'ampolletas', 10, 100, 25.00, 'Distribuidora Especializada', 'Farmacia - Estante Controlados E1'],
-          ['Fentanilo 50mcg/ml', 'Fentanilo', 'Ampolletas', '50mcg/ml', 'OPIOIDE', 1, 30, 'ampolletas', 8, 60, 45.00, 'Distribuidora Especializada', 'Farmacia - Estante Controlados E2'],
-          ['Midazolam 5mg/ml', 'Midazolam', 'Ampolletas', '5mg/ml', 'BENZODIACEPINA', 1, 40, 'ampolletas', 10, 80, 18.50, 'Distribuidora Especializada', 'Farmacia - Estante Controlados E3'],
-          ['Tramadol 100mg', 'Tramadol', 'Ampolletas', '100mg/2ml', 'OPIOIDE', 1, 60, 'ampolletas', 15, 120, 15.00, 'Laboratorios Farma', 'Farmacia - Estante Controlados E4'],
-          
-          // SOLUCIONES Y ELECTROLITOS
-          ['Solución Salina 0.9% 1000ml', 'Cloruro de Sodio', 'Bolsa IV', '0.9%', 'SOLUCIONES', 0, 100, 'bolsas', 30, 200, 15.00, 'Distribuidora Farmacéutica México', 'Almacén - Área de Soluciones'],
-          ['Dextrosa 5% 1000ml', 'Dextrosa', 'Bolsa IV', '5%', 'SOLUCIONES', 0, 80, 'bolsas', 25, 150, 18.00, 'Distribuidora Farmacéutica México', 'Almacén - Área de Soluciones'],
-          ['Hartmann 1000ml', 'Lactato de Ringer', 'Bolsa IV', '1000ml', 'SOLUCIONES', 0, 60, 'bolsas', 20, 120, 22.00, 'Distribuidora Farmacéutica México', 'Almacén - Área de Soluciones'],
-          ['Cloruro de Potasio 2mEq/ml', 'Cloruro de Potasio', 'Ampolletas', '2mEq/ml', 'ELECTROLITOS', 0, 40, 'ampolletas', 12, 80, 8.50, 'Laboratorios Farma', 'Farmacia Principal - Estante F1'],
-          
-          // MEDICAMENTOS RESPIRATORIOS
-          ['Salbutamol 100mcg', 'Salbutamol', 'Inhalador', '100mcg/dosis', 'BRONCODILATADOR', 0, 50, 'inhaladores', 15, 100, 85.00, 'Distribuidora Especializada', 'Farmacia Principal - Estante G1'],
-          ['Budesonida 200mcg', 'Budesonida', 'Inhalador', '200mcg/dosis', 'CORTICOSTEROIDE', 0, 30, 'inhaladores', 10, 60, 120.00, 'Laboratorios Especializados', 'Farmacia Principal - Estante G2'],
-          ['Teofilina 300mg', 'Teofilina', 'Tabletas de liberación prolongada', '300mg', 'BRONCODILATADOR', 0, 80, 'tabletas', 20, 150, 12.80, 'Laboratorios Farma', 'Farmacia Principal - Estante G3'],
-          
-          // MEDICAMENTOS NEUROLÓGICOS
-          ['Fenitoína 100mg', 'Fenitoína', 'Cápsulas', '100mg', 'ANTICONVULSIVANTE', 0, 60, 'cápsulas', 15, 120, 8.90, 'Laboratorios Farma', 'Farmacia Principal - Estante H1'],
-          ['Carbamazepina 200mg', 'Carbamazepina', 'Tabletas', '200mg', 'ANTICONVULSIVANTE', 0, 80, 'tabletas', 20, 150, 6.50, 'Distribuidora Farmacéutica México', 'Farmacia Principal - Estante H2'],
-          ['Levetiracetam 500mg', 'Levetiracetam', 'Tabletas', '500mg', 'ANTICONVULSIVANTE', 0, 40, 'tabletas', 12, 80, 25.00, 'Distribuidora Especializada', 'Farmacia Principal - Estante H3'],
-          
-          // ANTIHISTAMÍNICOS Y CORTICOSTEROIDES
-          ['Loratadina 10mg', 'Loratadina', 'Tabletas', '10mg', 'ANTIHISTAMINICO', 0, 200, 'tabletas', 50, 350, 3.20, 'Distribuidora Farmacéutica México', 'Farmacia Principal - Estante I1'],
-          ['Cetirizina 10mg', 'Cetirizina', 'Tabletas', '10mg', 'ANTIHISTAMINICO', 0, 150, 'tabletas', 40, 300, 4.80, 'Laboratorios Farma', 'Farmacia Principal - Estante I2'],
-          ['Prednisolona 20mg', 'Prednisolona', 'Tabletas', '20mg', 'CORTICOSTEROIDE', 0, 100, 'tabletas', 25, 200, 8.50, 'Laboratorios Farma', 'Farmacia Principal - Estante I3'],
-          ['Dexametasona 4mg/ml', 'Dexametasona', 'Ampolletas', '4mg/ml', 'CORTICOSTEROIDE', 0, 50, 'ampolletas', 15, 100, 12.00, 'Distribuidora Especializada', 'Farmacia Principal - Estante I4'],
-          
-          // MEDICAMENTOS DE URGENCIAS
-          ['Epinefrina 1mg/ml', 'Epinefrina', 'Ampolletas', '1mg/ml', 'VASOPRESOR', 0, 20, 'ampolletas', 8, 40, 35.00, 'Distribuidora Especializada', 'Farmacia - Carro de Emergencias'],
-          ['Atropina 1mg/ml', 'Atropina', 'Ampolletas', '1mg/ml', 'ANTICOLINERGICO', 0, 30, 'ampolletas', 10, 60, 18.00, 'Distribuidora Especializada', 'Farmacia - Carro de Emergencias'],
-          ['Dopamina 200mg/5ml', 'Dopamina', 'Ampolletas', '200mg/5ml', 'INOTRÓPICO', 0, 25, 'ampolletas', 8, 50, 28.00, 'Distribuidora Especializada', 'Farmacia - Carro de Emergencias'],
-          ['Norepinefrina 4mg/4ml', 'Norepinefrina', 'Ampolletas', '4mg/4ml', 'VASOPRESOR', 0, 15, 'ampolletas', 5, 30, 45.00, 'Distribuidora Especializada', 'Farmacia - Carro de Emergencias'],
-          
-          // MEDICAMENTOS PEDIÁTRICOS
-          ['Paracetamol Jarabe 120mg/5ml', 'Paracetamol', 'Jarabe', '120mg/5ml', 'ANALGESICO PEDIATRICO', 0, 40, 'frascos', 12, 80, 25.00, 'Laboratorios Farma', 'Farmacia Pediátrica - Estante P1'],
-          ['Amoxicilina Suspensión 250mg/5ml', 'Amoxicilina', 'Suspensión', '250mg/5ml', 'ANTIBIOTICO PEDIATRICO', 0, 30, 'frascos', 10, 60, 35.00, 'Laboratorios Farma', 'Farmacia Pediátrica - Estante P2'],
-          ['Ibuprofeno Suspensión 100mg/5ml', 'Ibuprofeno', 'Suspensión', '100mg/5ml', 'AINE PEDIATRICO', 0, 25, 'frascos', 8, 50, 28.00, 'Distribuidora Farmacéutica México', 'Farmacia Pediátrica - Estante P3'],
-          
-          // ANTIEMÉTICOS Y PROCINÉTICOS
-          ['Ondansetrón 4mg', 'Ondansetrón', 'Tabletas', '4mg', 'ANTIEMETICO', 0, 60, 'tabletas', 15, 120, 18.50, 'Distribuidora Especializada', 'Farmacia Principal - Estante J1'],
-          ['Metoclopramida 10mg', 'Metoclopramida', 'Tabletas', '10mg', 'PROCINETICO', 0, 100, 'tabletas', 25, 200, 4.20, 'Laboratorios Farma', 'Farmacia Principal - Estante J2'],
-          ['Dimenhidrinato 50mg', 'Dimenhidrinato', 'Tabletas', '50mg', 'ANTIEMETICO', 0, 80, 'tabletas', 20, 150, 6.80, 'Distribuidora Farmacéutica México', 'Farmacia Principal - Estante J3']
-        ];
-        
-        let inserted = 0;
-        for (const m of meds) {
-          try {
-            await db.execute(
-              `INSERT INTO medication_inventory (
-                name, active_ingredient, presentation, concentration, category,
-                is_controlled, quantity, unit, min_stock, max_stock, unit_price,
-                supplier, lot_number, expiration_date, location, storage_conditions, status, last_restocked, created_at, updated_at
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11], m[12], m[13], m[14], 'Temperatura ambiente (15-30°C)', 'active', now, now, now]
-            );
-            inserted++;
-            console.log(`  ✅ Inserted: ${m[0]}`);
-          } catch (medError) {
-            console.error(`  ❌ Error inserting ${m[0]}:`, medError);
-          }
-        }
-        console.log(`✅ Created ${inserted}/${meds.length} medications in inventory`);
-    } else {
-        console.log(`ℹ️ Medication inventory already has ${medications[0].count} items, skipping`);
-    }
-  } catch (e) {
-    console.error('⚠️ Error in medication inventory seeding:', e);
-  }
-  
-  // 8. Poblar Tratamientos/Medicaciones (MASIVAMENTE EXPANDIDO)
-  try {
-    const treatments = await db.select("SELECT count(*) as count FROM treatments");
-    if (treatments[0].count === 0) {
-        console.log('💊 Seeding Comprehensive Treatments for ALL patients...');
-        const pList = await db.select("SELECT id FROM patients ORDER BY id");
-        
-        if (pList.length > 0) {
-          const treatmentData = [];
-          
-          // Generar tratamientos diversos por especialidad y condición
-          for (let i = 0; i < Math.min(pList.length, 50); i++) {
-            const patientId = pList[i].id;
-            
-            // Pacientes de Medicina Interna (primeros 15)
-            if (i < 15) {
-              if (i === 0) { // Neumonía
-                treatmentData.push(
-                  [patientId, 'Amoxicilina 500mg', '500mg cada 8 horas', 'Cada 8 horas', '2026-01-05', '2026-01-12', 'Enf. Laura Martínez', '08/01 08:00', 'Dr. Ramírez', 'Activo'],
-                  [patientId, 'Paracetamol 500mg', '500mg cada 6 horas', 'Cada 6 horas', '2026-01-05', null, 'Enf. Laura Martínez', '08/01 08:30', 'Dr. Ramírez', 'Activo']
-                );
-              } else if (i === 1) { // Post-operatorio cardiovascular
-                treatmentData.push(
-                  [patientId, 'Morfina 10mg', '10mg IV cada 4 horas', 'Cada 4 horas', '2026-01-06', null, 'Enf. Carlos López', '08/01 06:00', 'Dr. González', 'Activo'],
-                  [patientId, 'Omeprazol 20mg', '20mg cada 12 horas', 'Cada 12 horas', '2026-01-06', null, 'Enf. Laura Martínez', '08/01 08:00', 'Dr. González', 'Activo'],
-                  [patientId, 'Atorvastatina 20mg', '20mg cada 24 horas', 'Diaria', '2026-01-06', null, 'Enf. Laura Martínez', '08/01 20:00', 'Dr. González', 'Activo']
-                );
-              } else if (i === 2) { // Apendicectomía
-                treatmentData.push(
-                  [patientId, 'Ibuprofeno 400mg', '400mg cada 8 horas', 'Cada 8 horas', '2026-01-07', '2026-01-10', 'Enf. Ana García', '08/01 09:00', 'Dr. Hernández', 'Activo'],
-                  [patientId, 'Cefalexina 500mg', '500mg cada 6 horas', 'Cada 6 horas', '2026-01-07', '2026-01-14', 'Enf. Ana García', '08/01 09:30', 'Dr. Hernández', 'Activo']
-                );
-              } else if (i === 3) { // Diabetes
-                treatmentData.push(
-                  [patientId, 'Metformina 850mg', '850mg cada 12 horas', 'Cada 12 horas', '2026-01-06', null, 'Enf. Laura Martínez', '08/01 07:30', 'Dr. Martínez', 'Activo'],
-                  [patientId, 'Insulina Glargina', '20 UI subcutánea', 'Diaria nocturna', '2026-01-06', null, 'Enf. Laura Martínez', '08/01 22:00', 'Dr. Martínez', 'Activo'],
-                  [patientId, 'Glibenclamida 5mg', '5mg cada 12 horas', 'Cada 12 horas', '2026-01-06', null, 'Enf. Laura Martínez', '08/01 08:00', 'Dr. Martínez', 'Activo']
-                );
-              } else if (i === 4) { // Infarto
-                treatmentData.push(
-                  [patientId, 'Losartán 50mg', '50mg cada 24 horas', 'Diaria', '2026-01-07', null, 'Enf. Carlos López', '08/01 08:00', 'Dr. López', 'Activo'],
-                  [patientId, 'Aspirina 100mg', '100mg cada 24 horas', 'Diaria', '2026-01-07', null, 'Enf. Carlos López', '08/01 08:30', 'Dr. López', 'Activo'],
-                  [patientId, 'Carvedilol 25mg', '12.5mg cada 12 horas', 'Cada 12 horas', '2026-01-07', null, 'Enf. Carlos López', '08/01 09:00', 'Dr. López', 'Activo']
-                );
-              } else { // Otros pacientes - tratamientos variados
-                const commonMeds = [
-                  ['Paracetamol 500mg', '500mg cada 8 horas', 'Cada 8 horas'],
-                  ['Omeprazol 20mg', '20mg cada 12 horas', 'Cada 12 horas'],
-                  ['Loratadina 10mg', '10mg cada 24 horas', 'Diaria']
-                ];
-                const randomMed = commonMeds[Math.floor(Math.random() * commonMeds.length)];
-                treatmentData.push([patientId, randomMed[0], randomMed[1], randomMed[2], '2026-01-06', null, 'Enf. Laura Martínez', '08/01 08:00', 'Dr. Ramírez', 'Activo']);
-              }
-            }
-            
-            // Pacientes de UCI/Cardiología (15-29)
-            else if (i >= 15 && i < 30) {
-              if (i === 15) { // Infarto masivo UCI
-                treatmentData.push(
-                  [patientId, 'Dopamina 200mg/5ml', '5mcg/kg/min IV continua', 'Continua', '2026-01-06', null, 'Enf. Sandra López', '08/01 06:00', 'Dr. Mendoza', 'Activo'],
-                  [patientId, 'Morfina 10mg', '2mg IV cada 2 horas PRN', 'PRN dolor', '2026-01-06', null, 'Enf. Sandra López', '08/01 06:30', 'Dr. Mendoza', 'Activo'],
-                  [patientId, 'Heparina 25000UI', '1000UI/h IV continua', 'Continua', '2026-01-06', null, 'Enf. Sandra López', '08/01 07:00', 'Dr. Mendoza', 'Activo']
-                );
-              } else if (i === 16) { // Choque séptico
-                treatmentData.push(
-                  [patientId, 'Norepinefrina 4mg/4ml', '0.1mcg/kg/min', 'Continua', '2026-01-05', null, 'Enf. Sandra López', '08/01 05:00', 'Dra. López', 'Activo'],
-                  [patientId, 'Ceftriaxona 1g', '1g IV cada 12 horas', 'Cada 12 horas', '2026-01-05', '2026-01-12', 'Enf. Sandra López', '08/01 06:00', 'Dra. López', 'Activo'],
-                  [patientId, 'Dexametasona 4mg/ml', '8mg IV cada 8 horas', 'Cada 8 horas', '2026-01-05', '2026-01-09', 'Enf. Sandra López', '08/01 06:30', 'Dra. López', 'Activo']
-                );
-              } else { // Otros pacientes críticos
-                const criticalMeds = [
-                  ['Midazolam 5mg/ml', '2-5mg IV PRN', 'PRN agitación'],
-                  ['Fentanilo 50mcg/ml', '25mcg IV cada 2h PRN', 'PRN dolor severo'],
-                  ['Pantoprazol 40mg', '40mg IV cada 12 horas', 'Cada 12 horas']
-                ];
-                const randomMed = criticalMeds[Math.floor(Math.random() * criticalMeds.length)];
-                treatmentData.push([patientId, randomMed[0], randomMed[1], randomMed[2], '2026-01-06', null, 'Enf. Sandra López', '08/01 08:00', 'Dr. Herrera', 'Activo']);
-              }
-            }
-            
-            // Pacientes Pediátricos (30-39)
-            else if (i >= 30 && i < 40) {
-              const pediatricMeds = [
-                ['Paracetamol Jarabe 120mg/5ml', '10ml cada 6 horas', 'Cada 6 horas'],
-                ['Amoxicilina Suspensión 250mg/5ml', '5ml cada 8 horas', 'Cada 8 horas'],
-                ['Ibuprofeno Suspensión 100mg/5ml', '5ml cada 8 horas', 'Cada 8 horas'],
-                ['Salbutamol 100mcg', '2 puffs cada 6 horas', 'Cada 6 horas']
-              ];
-              const randomMed = pediatricMeds[Math.floor(Math.random() * pediatricMeds.length)];
-              treatmentData.push([patientId, randomMed[0], randomMed[1], randomMed[2], '2026-01-06', null, 'Enf. Carmen Rodríguez', '08/01 08:00', 'Dra. Rodríguez', 'Activo']);
-            }
-            
-            // Pacientes Obstétricos (40-49)
-            else {
-              const obstetricMeds = [
-                ['Oxitocina 10UI', '2-10mUI/min IV', 'Según necesidad'],
-                ['Metoclopramida 10mg', '10mg IV cada 8 horas', 'Cada 8 horas'],
-                ['Sulfato Ferroso 325mg', '1 tableta cada 12 horas', 'Cada 12 horas'],
-                ['Ácido Fólico 5mg', '1 tableta diaria', 'Diaria']
-              ];
-              const randomMed = obstetricMeds[Math.floor(Math.random() * obstetricMeds.length)];
-              treatmentData.push([patientId, randomMed[0], randomMed[1], randomMed[2], '2026-01-06', null, 'Enf. Elena Torres', '08/01 08:00', 'Dra. Torres', 'Activo']);
-            }
-          }
-          
-          // Insertar todos los tratamientos
-          for (const t of treatmentData) {
-            await db.execute(
-              `INSERT INTO treatments (patient_id, medication, dose, frequency, start_date, end_date, applied_by, last_application, responsible_doctor, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              t
-            );
-          }
-          console.log(`✅ Created ${treatmentData.length} comprehensive treatments for multiple specialties`);
-        }
-    }
-  } catch (e) {
-    console.warn('⚠️ Error seeding treatments:', e);
-  }
-  
-  // 9. Poblar Notas de Enfermería (MASIVAMENTE EXPANDIDO)
-  try {
-    const notes = await db.select("SELECT count(*) as count FROM nurse_notes");
-    if (notes[0].count === 0) {
-        console.log('📝 Seeding Comprehensive Nurse Notes for ALL patients...');
-        const pList = await db.select("SELECT id, name, diagnosis FROM patients ORDER BY id");
-        
-        if (pList.length > 0) {
-          const noteData = [];
-          const shifts = [
-            { time: '06:00', nurse: 'Enf. Laura Martínez' },
-            { time: '14:00', nurse: 'Enf. Carlos López' }, 
-            { time: '22:00', nurse: 'Enf. Ana García' }
-          ];
-          
-          for (let i = 0; i < Math.min(pList.length, 50); i++) {
-            const patient = pList[i];
-            const patientName = patient.name;
-            
-            // Generar notas por día (últimos 3 días) y turno
-            for (let day = 0; day < 3; day++) {
-              const currentDate = new Date();
-              currentDate.setDate(currentDate.getDate() - day);
-              const dateStr = currentDate.toLocaleString('es-MX').split(',')[0];
-              
-              for (const shift of shifts) {
-                let noteContent = '';
-                let noteType = 'Evolución';
-                
-                // Notas específicas por piso/especialidad
-                if (patient.floor === 'Piso 3 - Medicina Interna') {
-                  const internalMedicineNotes = [
-                    { note: `Paciente ${patientName} presenta evolución favorable. Signos vitales estables. Refiere disminución del dolor. Continúa con tratamiento farmacológico indicado.`, type: 'Evolución' },
-                    { note: `${patientName} - Deambulación asistida realizada sin complicaciones. Ingesta oral adecuada, tolera dieta completa. Educación sobre medicamentos proporcionada.`, type: 'Procedimiento' },
-                    { note: `Observación: ${patientName} manifiesta ligero malestar matutino. Aplicados medicamentos según horario. Familiares informados del estado general.`, type: 'Evolución' },
-                    { note: `Paciente colaborador. ${patientName} cumple con reposo relativo indicado. Herida quirúrgica sin signos de infección. Curaciones realizadas.`, type: 'Procedimiento' },
-                    { note: `Turno tranquilo. ${patientName} descansó adecuadamente. Medicación administrada según prescripción médica. Pendiente evaluación médica matutina.`, type: 'Evolución' }
-                  ];
-                  const randomNote = internalMedicineNotes[Math.floor(Math.random() * internalMedicineNotes.length)];
-                  noteContent = randomNote.note;
-                  noteType = randomNote.type;
-                }
-                
-                else if (patient.floor === 'Piso 4 - UCI/Cardiología') {
-                  const ucuNotes = [
-                    { note: `UCI: ${patientName} - Paciente crítico estable. Monitorización continua. Parámetros hemodinámicos dentro de rangos aceptables. Familia informada.`, type: 'Evolución' },
-                    { note: `${patientName} - Soporte ventilatorio mecánico 40%. Gasometría arterial dentro de parámetros. Sedación controlada. Cuidados intensivos continuos.`, type: 'Procedimiento' },
-                    { note: `Cardiología: ${patientName} presenta ritmo sinusal regular. Medicación vasoactiva ajustada según indicaciones médicas. Familiar acompañante presente.`, type: 'Evolución' },
-                    { note: `Paciente ${patientName} - Despertar neurológico adecuado. Responde a estímulos verbales. Bomba de infusión funcionando correctamente.`, type: 'Evolución' },
-                    { note: `UCI: ${patientName} - Balance hídrico negativo 200ml. Diuresis espontánea. Monitoreo cardíaco continuo. Pronóstico reservado pero estable.`, type: 'Procedimiento' }
-                  ];
-                  const randomNote = ucuNotes[Math.floor(Math.random() * ucuNotes.length)];
-                  noteContent = randomNote.note;
-                  noteType = randomNote.type;
-                }
-                
-                else if (patient.floor === 'Piso 2 - Pediatría') {
-                  const pediatricNotes = [
-                    { note: `Pediatría: ${patientName} - Menor tranquilo acompañado de madre. Ingesta de alimentos adecuada para la edad. Temperatura corporal normal.`, type: 'Evolución' },
-                    { note: `${patientName} - Actividad lúdica supervisada realizada. Medicamentos administrados con colaboración. Familiar instruido sobre cuidados.`, type: 'Procedimiento' },
-                    { note: `Menor ${patientName} - Sueño reparador durante turno nocturno. Signos vitales apropiados para grupo etario. Control pediátrico pendiente.`, type: 'Evolución' },
-                    { note: `${patientName} - Hidratación oral exitosa. Menor activo y reactivo. Educación a familiares sobre administración de medicamentos en casa.`, type: 'Procedimiento' },
-                    { note: `Pediatría: ${patientName} - Evolución clínica satisfactoria. Menor colabora con procedimientos. Apoyo emocional brindado a familia.`, type: 'Evolución' }
-                  ];
-                  const randomNote = pediatricNotes[Math.floor(Math.random() * pediatricNotes.length)];
-                  noteContent = randomNote.note;
-                  noteType = randomNote.type;
-                }
-                
-                else if (patient.floor === 'Piso 2 - Ginecología') {
-                  const gynecologyNotes = [
-                    { note: `Ginecología: ${patientName} - Postoperatorio inmediato sin complicaciones. Sangrado vaginal escaso esperado. Dolor controlado con analgesia.`, type: 'Evolución' },
-                    { note: `${patientName} - Deambulación temprana realizada exitosamente. Catéter vesical retirado. Micción espontánea presente.`, type: 'Procedimiento' },
-                    { note: `Paciente ${patientName} - Revisión de suturas sin signos de dehiscencia. Orientada en tiempo y espacio. Familiar acompañante presente.`, type: 'Evolución' },
-                    { note: `${patientName} - Ingesta oral reiniciada progresivamente. Tolera líquidos y dieta blanda. Medicación para el dolor efectiva.`, type: 'Evolución' },
-                    { note: `Ginecología: ${patientName} - Control puerperal satisfactorio. Loquios normales. Lactancia materna establecida exitosamente.`, type: 'Procedimiento' }
-                  ];
-                  const randomNote = gynecologyNotes[Math.floor(Math.random() * gynecologyNotes.length)];
-                  noteContent = randomNote.note;
-                  noteType = randomNote.type;
-                }
-                
-                noteData.push([
-                  patient.id,
-                  dateStr,
-                  noteContent,
-                  noteType,
-                  shift.nurse
-                ]);
-              }
-            }
-          }
-          
-          // Insertar todas las notas
-          for (const n of noteData) {
-            await db.execute(
-              `INSERT INTO nurse_notes (patient_id, date, note, note_type, nurse_name)
-               VALUES (?, ?, ?, ?, ?)`,
-              n
-            );
-          }
-          console.log(`✅ Created ${noteData.length} comprehensive nurse notes across all specialties and shifts`);
-        }
-    }
-  } catch (e) {
-    console.warn('⚠️ Error seeding nurse notes:', e);
-  }
-  
-  // 10. Poblar Citas Médicas (MASIVAMENTE EXPANDIDO)
-  try {
-    const appointments = await db.select("SELECT count(*) as count FROM appointments");
-    if (appointments[0].count === 0) {
-        console.log('📅 Seeding Comprehensive Medical Appointments for ALL patients...');
-        const pList = await db.select("SELECT id, name, diagnosis, room FROM patients ORDER BY id");
-        
-        if (pList.length > 0) {
-          const appointmentData = [];
-          const doctors = [
-            'Dr. Ramírez Moreno', 'Dr. González Herrera', 'Dr. Hernández López', 'Dra. Martínez Silva',
-            'Dr. López Fernández', 'Dra. García Ruiz', 'Dr. Torres Mendoza', 'Dra. Rodríguez Vargas',
-            'Dr. Mendoza Castro', 'Dra. López Jiménez', 'Dr. Herrera Valdés', 'Dra. Torres Sánchez'
-          ];
-          
-          const specialties = [
-            'Medicina Interna', 'Cardiología', 'Gastroenterología', 'Neumología', 'Endocrinología',
-            'Neurología', 'Pediatría', 'Ginecología', 'Obstetricia', 'Cirugía General',
-            'Traumatología', 'Oncología', 'Dermatología', 'Urología', 'Oftalmología'
-          ];
-          
-          // Tipos de citas por especialidad
-          const appointmentTypes = {
-            'Medicina Interna': ['Control general', 'Seguimiento', 'Consulta inicial', 'Revisión de laboratorios'],
-            'Cardiología': ['Ecocardiograma', 'Control post-infarto', 'Holter 24h', 'Consulta hipertensión'],
-            'Gastroenterología': ['Endoscopia', 'Control gastritis', 'Colonoscopia', 'Consulta digestiva'],
-            'Neumología': ['Espirometría', 'Control asma', 'Consulta EPOC', 'Radiografía tórax'],
-            'Endocrinología': ['Control diabetes', 'Consulta tiroides', 'Metabolismo', 'Control hormonal'],
-            'Neurología': ['Electroencefalograma', 'Control epilepsia', 'Consulta cefaleas', 'TAC cerebral'],
-            'Pediatría': ['Control niño sano', 'Vacunación', 'Consulta pediatrica', 'Control crecimiento'],
-            'Ginecología': ['Papanicolaou', 'Control prenatal', 'Ecografía pélvica', 'Consulta ginecológica'],
-            'Obstetricia': ['Control prenatal', 'Ecografía obstétrica', 'Control post-parto', 'Consulta embarazo'],
-            'Cirugía General': ['Consulta pre-operatoria', 'Control post-operatorio', 'Evaluación quirúrgica', 'Seguimiento'],
-            'Traumatología': ['Control fractura', 'Fisioterapia', 'Radiografía control', 'Consulta ortopedia'],
-            'Oncología': ['Quimioterapia', 'Control oncológico', 'TAC control', 'Consulta oncología'],
-            'Dermatología': ['Consulta dermatológica', 'Control lesiones', 'Biopsia', 'Seguimiento'],
-            'Urología': ['Consulta urológica', 'Ecografía renal', 'Control próstata', 'Cistoscopia'],
-            'Oftalmología': ['Consulta oftalmológica', 'Control glaucoma', 'Fondo de ojo', 'Graduación']
-          };
-          
-          for (let i = 0; i < Math.min(pList.length, 50); i++) {
-            const patient = pList[i];
-            const patientName = patient.name;
-            
-            // Generar 2-4 citas por paciente
-            const numAppointments = Math.floor(Math.random() * 3) + 2;
-            
-            for (let j = 0; j < numAppointments; j++) {
-              // Fechas futuras (próximos 30 días)
-              const futureDate = new Date();
-              futureDate.setDate(futureDate.getDate() + Math.floor(Math.random() * 30) + 1);
-              const dateStr = futureDate.toISOString().split('T')[0];
-              
-              // Horarios realistas
-              const hours = ['08:00', '09:00', '10:00', '11:00', '14:00', '15:00', '16:00', '17:00'];
-              const randomHour = hours[Math.floor(Math.random() * hours.length)];
-              
-              // Especialidad basada en condición médica
-              let specialty = specialties[Math.floor(Math.random() * specialties.length)];
-              if (patient.floor === 'Piso 4 - UCI/Cardiología' || patient.medical_condition?.includes('Cardíaco')) {
-                specialty = 'Cardiología';
-              } else if (patient.floor === 'Piso 2 - Pediatría') {
-                specialty = 'Pediatría';
-              } else if (patient.floor === 'Piso 2 - Ginecología') {
-                specialty = Math.random() > 0.5 ? 'Ginecología' : 'Obstetricia';
-              } else if (patient.medical_condition?.includes('Diabetes')) {
-                specialty = 'Endocrinología';
-              }
-              
-              // Tipo de cita específico
-              const appointmentTypesForSpecialty = appointmentTypes[specialty] || ['Consulta general'];
-              const randomType = appointmentTypesForSpecialty[Math.floor(Math.random() * appointmentTypesForSpecialty.length)];
-              
-              appointmentData.push([
-                patient.id,
-                patientName,
-                dateStr,
-                randomHour,
-                `${specialty} - ${randomType}`,
-                Math.random() > 0.2 ? 'Programada' : 'Pendiente',
-                doctors[Math.floor(Math.random() * doctors.length)]
-              ]);
-            }
-          }
-          
-          // Insertar todas las citas
-          for (const a of appointmentData) {
-            await db.execute(
-              `INSERT INTO appointments (patient_id, patient_name, date, time, type, status, doctor)
-               VALUES (?, ?, ?, ?, ?, ?, ?)`,
-              a
-            );
-          }
-          console.log(`✅ Created ${appointmentData.length} comprehensive medical appointments across all specialties`);
-        }
-    }
-  } catch (e) {
-    console.warn('⚠️ Error seeding appointments:', e);
-  }
-
-  // 11. Poblar Historial Médico (NUEVO - Para gráficas y tendencias)
-  try {
-    const medicalHistory = await db.select("SELECT count(*) as count FROM medical_history");
-    if (medicalHistory[0].count === 0) {
-        console.log('📋 Seeding Comprehensive Medical History for ALL patients...');
-        const pList = await db.select("SELECT id, name, diagnosis FROM patients ORDER BY id");
-        
-        if (pList.length > 0) {
-          const historyData = [];
-          const doctors = [
-            'Dr. Ramírez Moreno', 'Dr. González Herrera', 'Dr. Hernández López', 'Dra. Martínez Silva',
-            'Dr. López Fernández', 'Dra. García Ruiz', 'Dr. Torres Mendoza', 'Dra. Rodríguez Vargas'
-          ];
-          
-          for (let i = 0; i < Math.min(pList.length, 50); i++) {
-            const patient = pList[i];
-            const patientName = patient.name;
-            
-            // Generar 2-5 registros históricos por paciente (últimos 6 meses)
-            const numRecords = Math.floor(Math.random() * 4) + 2;
-            
-            for (let j = 0; j < numRecords; j++) {
-              const daysAgo = Math.floor(Math.random() * 180) + (j * 30); // Distribuir en 6 meses
-              const recordDate = new Date();
-              recordDate.setDate(recordDate.getDate() - daysAgo);
-              const dateStr = recordDate.toISOString().split('T')[0];
-              
-              let diagnosis = '';
-              let treatment = '';
-              let notes = '';
-              
-              // Diagnósticos y tratamientos basados en la especialidad
-              if (patient.floor === 'Piso 3 - Medicina Interna') {
-                const conditions = [
-                  { dx: 'Neumonía adquirida en comunidad', tx: 'Amoxicilina 500mg cada 8h por 10 días', note: 'Evolución favorable, radiografía de control en 1 semana' },
-                  { dx: 'Hipertensión arterial esencial', tx: 'Losartán 50mg cada 24h, restricción de sodio', note: 'Control mensual de presión arterial, objetivo <130/80 mmHg' },
-                  { dx: 'Diabetes Mellitus tipo 2', tx: 'Metformina 850mg cada 12h, dieta 1800 kcal', note: 'HbA1c 7.2%, control cada 3 meses' },
-                  { dx: 'Gastritis crónica', tx: 'Omeprazol 20mg cada 12h antes de alimentos', note: 'Evitar irritantes gástricos, valorar endoscopia' }
-                ];
-                const randomCondition = conditions[Math.floor(Math.random() * conditions.length)];
-                diagnosis = randomCondition.dx;
-                treatment = randomCondition.tx;
-                notes = randomCondition.note;
-              }
-              
-              else if (patient.floor === 'Piso 4 - UCI/Cardiología') {
-                const conditions = [
-                  { dx: 'Infarto agudo de miocardio STEMI', tx: 'Aspirina 100mg, Clopidogrel 75mg, Atorvastatina 80mg, Metoprolol', note: 'Cateterismo realizado, stent colocado en arteria descendente anterior, UCE por 72h' },
-                  { dx: 'Insuficiencia cardíaca congestiva', tx: 'Furosemida 40mg, Enalapril 10mg, Carvedilol 6.25mg', note: 'Fracción de eyección 35%, restricción de líquidos 1.5L/día' },
-                  { dx: 'Choque séptico de origen pulmonar', tx: 'Ceftriaxona 2g IV cada 12h, Norepinefrina en infusión continua', note: 'Cultivos tomados, soporte ventilatorio mecánico, pronóstico reservado' },
-                  { dx: 'Arritmia cardíaca - Fibrilación auricular', tx: 'Amiodarona 200mg cada 12h, Anticoagulación con Warfarina', note: 'Control de INR semanal, objetivo 2-3' }
-                ];
-                const randomCondition = conditions[Math.floor(Math.random() * conditions.length)];
-                diagnosis = randomCondition.dx;
-                treatment = randomCondition.tx;
-                notes = randomCondition.note;
-              }
-              
-              else if (patient.floor === 'Piso 2 - Pediatría') {
-                const conditions = [
-                  { dx: 'Bronquiolitis viral', tx: 'Salbutamol nebulizaciones cada 4h, hidratación oral', note: 'Saturación de oxígeno >92%, vigilar signos de dificultad respiratoria' },
-                  { dx: 'Gastroenteritis aguda', tx: 'Vida Suero Oral, probióticos, dieta astringente', note: 'Tolerando vía oral, hidratación adecuada' },
-                  { dx: 'Faringitis estreptocócica', tx: 'Penicilina V 250mg cada 8h por 10 días', note: 'Cultivo positivo para Streptococcus beta hemolítico grupo A' },
-                  { dx: 'Otitis media aguda', tx: 'Amoxicilina suspensión 125mg cada 8h por 7 días', note: 'Membrana timpánica hiperémica, control en 48h' }
-                ];
-                const randomCondition = conditions[Math.floor(Math.random() * conditions.length)];
-                diagnosis = randomCondition.dx;
-                treatment = randomCondition.tx;
-                notes = randomCondition.note;
-              }
-              
-              else if (patient.floor === 'Piso 2 - Ginecología') {
-                const conditions = [
-                  { dx: 'Postoperatorio de cesárea segmentaria', tx: 'Ketorolaco 30mg IV cada 8h, profilaxis antibiótica', note: 'Herida quirúrgica limpia, involución uterina adecuada' },
-                  { dx: 'Amenaza de aborto', tx: 'Reposo absoluto, Progesterona 200mg cada 12h', note: 'Ultrasonido con embrión vivo, FCF 140 lpm' },
-                  { dx: 'Preeclampsia leve', tx: 'Alfametildopa 250mg cada 8h, vigilancia de TA', note: 'TA 145/90, proteinuria +, control obstétrico estrecho' },
-                  { dx: 'Miomatosis uterina', tx: 'Ácido tranexámico, valoración quirúrgica', note: 'Mioma intramural de 6cm, anemia leve secundaria' }
-                ];
-                const randomCondition = conditions[Math.floor(Math.random() * conditions.length)];
-                diagnosis = randomCondition.dx;
-                treatment = randomCondition.tx;
-                notes = randomCondition.note;
-              }
-              
-              else {
-                diagnosis = 'Consulta de valoración general';
-                treatment = 'Manejo expectante, observación';
-                notes = 'Paciente estable, continuar vigilancia';
-              }
-              
-              historyData.push([
-                patient.id,
-                dateStr,
-                diagnosis,
-                treatment,
-                notes,
-                doctors[Math.floor(Math.random() * doctors.length)]
-              ]);
-            }
-          }
-          
-          // Insertar todos los registros históricos
-          for (const h of historyData) {
-            await db.execute(
-              `INSERT INTO medical_history (patient_id, date, diagnosis, treatment, notes, doctor)
-               VALUES (?, ?, ?, ?, ?, ?)`,
-              h
-            );
-          }
-          console.log(`✅ Created ${historyData.length} comprehensive medical history records`);
-        }
-    }
-  } catch (e) {
-    console.warn('⚠️ Error seeding medical history:', e);
-  }
-
-  // 12. Poblar Pruebas de Laboratorio (NUEVO - Para historial clínico)
-  try {
-    const labTests = await db.select("SELECT count(*) as count FROM lab_tests");
-    if (labTests[0].count === 0) {
-        console.log('🔬 Seeding Comprehensive Lab Tests for patients...');
-        const pList = await db.select("SELECT id, name FROM patients ORDER BY id");
-        
-        if (pList.length > 0) {
-          const labData = [];
-          const doctors = ['Dr. Ramírez', 'Dr. González', 'Dra. Martínez', 'Dr. López'];
-          
-          const labTestsTypes = [
-            { name: 'Biometría Hemática Completa', results: 'Hb: 14.2 g/dL, Leucocitos: 7,500/mm³, Plaquetas: 250,000/mm³' },
-            { name: 'Química Sanguínea (Glucosa, Urea, Creatinina)', results: 'Glucosa: 95 mg/dL, Urea: 32 mg/dL, Creatinina: 0.9 mg/dL' },
-            { name: 'Perfil Lipídico', results: 'Colesterol Total: 180 mg/dL, HDL: 45 mg/dL, LDL: 110 mg/dL, TG: 125 mg/dL' },
-            { name: 'Pruebas de Función Hepática', results: 'AST: 25 U/L, ALT: 28 U/L, Bilirrubina Total: 0.8 mg/dL' },
-            { name: 'Electrolitos Séricos', results: 'Na: 140 mEq/L, K: 4.2 mEq/L, Cl: 102 mEq/L' },
-            { name: 'Gasometría Arterial', results: 'pH: 7.38, PO2: 95 mmHg, PCO2: 40 mmHg, HCO3: 24 mEq/L' },
-            { name: 'Examen General de Orina', results: 'Aspecto claro, pH: 6.0, Densidad: 1.020, Leucocitos: 2-4/campo' },
-            { name: 'Cultivo de Sangre', results: 'Negativo para crecimiento bacteriano a 72h' },
-            { name: 'Rayos X de Tórax PA y Lateral', results: 'Silueta cardíaca normal, campos pulmonares sin infiltrados' },
-            { name: 'Electrocardiograma de 12 derivaciones', results: 'Ritmo sinusal regular, FC: 75 lpm, sin alteraciones del ST-T' }
-          ];
-          
-          for (let i = 0; i < Math.min(pList.length, 50); i++) {
-            const patient = pList[i];
-            
-            // Cada paciente tiene 2-4 pruebas de laboratorio
-            const numTests = Math.floor(Math.random() * 3) + 2;
-            
-            for (let j = 0; j < numTests; j++) {
-              const daysAgo = Math.floor(Math.random() * 30) + (j * 7);
-              const testDate = new Date();
-              testDate.setDate(testDate.getDate() - daysAgo);
-              const dateStr = testDate.toISOString().split('T')[0];
-              
-              const randomTest = labTestsTypes[Math.floor(Math.random() * labTestsTypes.length)];
-              const status = daysAgo > 3 ? 'Completado' : (daysAgo > 1 ? 'En Proceso' : 'Pendiente');
-              const results = status === 'Completado' ? randomTest.results : null;
-              
-              labData.push([
-                patient.id,
-                randomTest.name,
-                dateStr,
-                status,
-                results,
-                doctors[Math.floor(Math.random() * doctors.length)]
-              ]);
-            }
-          }
-          
-          // Insertar todas las pruebas
-          for (const l of labData) {
-            await db.execute(
-              `INSERT INTO lab_tests (patient_id, test, date, status, results, ordered_by)
-               VALUES (?, ?, ?, ?, ?, ?)`,
-              l
-            );
-          }
-          console.log(`✅ Created ${labData.length} lab test records`);
-        }
-    }
-  } catch (e) {
-    console.warn('⚠️ Error seeding lab tests:', e);
-  }
-
-  // 13. Poblar Tratamientos No Farmacológicos (NUEVO - Para notas editables)
-  try {
-    const nonPharmaTreatments = await db.select("SELECT count(*) as count FROM non_pharmacological_treatments");
-    if (nonPharmaTreatments[0].count === 0) {
-        console.log('🩹 Seeding Non-Pharmacological Treatments...');
-        const pList = await db.select("SELECT id, name FROM patients ORDER BY id");
-        
-        if (pList.length > 0) {
-          const treatmentData = [];
-          const nurses = ['Enf. Laura Martínez', 'Enf. Carlos López', 'Enf. Ana García', 'Enf. Sandra López'];
-          
-          const treatmentTypes = [
-            { type: 'Curación', desc: 'Curación de herida quirúrgica', materials: 'Gasas estériles, solución salina, apósito adhesivo', outcome: 'Herida limpia sin signos de infección' },
-            { type: 'Nebulización', desc: 'Nebulización con salbutamol', materials: 'Salbutamol 2.5mg, nebulizador, mascarilla', outcome: 'Mejoría de la saturación, disminución de sibilancias' },
-            { type: 'Aspiración de secreciones', desc: 'Aspiración de secreciones orotraqueales', materials: 'Sonda de aspiración No. 12, guantes estériles', outcome: 'Vía aérea permeable, saturación >94%' },
-            { type: 'Cambio de posición', desc: 'Movilización y cambio postural', materials: 'Almohadas, cojines antiescaras', outcome: 'Prevención de úlceras por presión' },
-            { type: 'Fisioterapia respiratoria', desc: 'Ejercicios respiratorios y espirometría incentiva', materials: 'Espirómetro incentivo', outcome: 'Expansión pulmonar adecuada' },
-            { type: 'Fluidoterapia', desc: 'Administración de solución Hartmann 1000ml', materials: 'Solución Hartmann, equipo de venoclisis', outcome: 'Hidratación adecuada, diuresis presente' },
-            { type: 'Curación de úlcera por presión', desc: 'Curación de UPP grado II en región sacra', materials: 'Hidrocoloide, solución salina, gasas', outcome: 'Tejido de granulación presente, disminución del tamaño' },
-            { type: 'Baño de esponja', desc: 'Baño en cama con agua tibia', materials: 'Toallas, agua tibia, jabón neutro', outcome: 'Paciente aseado, piel íntegra' }
-          ];
-          
-          for (let i = 0; i < Math.min(pList.length, 30); i++) {
-            const patient = pList[i];
-            
-            // Algunos pacientes tienen 1-3 tratamientos no farmacológicos
-            const numTreatments = Math.floor(Math.random() * 3) + 1;
-            
-            for (let j = 0; j < numTreatments; j++) {
-              const daysAgo = Math.floor(Math.random() * 7);
-              const treatmentDate = new Date();
-              treatmentDate.setDate(treatmentDate.getDate() - daysAgo);
-              const dateStr = treatmentDate.toISOString().split('T')[0];
-              const timeStr = `${8 + Math.floor(Math.random() * 12)}:${Math.floor(Math.random() * 60).toString().padStart(2, '0')}`;
-              
-              const randomTreatment = treatmentTypes[Math.floor(Math.random() * treatmentTypes.length)];
-              
-              treatmentData.push([
-                patient.id,
-                randomTreatment.type,
-                randomTreatment.desc,
-                dateStr,
-                timeStr,
-                `${Math.floor(Math.random() * 45) + 15} minutos`,
-                nurses[Math.floor(Math.random() * nurses.length)],
-                randomTreatment.materials,
-                `Paciente ${patient.name} - Procedimiento realizado sin complicaciones`,
-                randomTreatment.outcome,
-                daysAgo === 0 ? 'Programar para mañana' : null,
-                'Completado'
-              ]);
-            }
-          }
-          
-          // Insertar todos los tratamientos
-          for (const t of treatmentData) {
-            await db.execute(
-              `INSERT INTO non_pharmacological_treatments 
-               (patient_id, treatment_type, description, application_date, application_time, duration, 
-                performed_by, materials_used, observations, outcome, next_application, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              t
-            );
-          }
-          console.log(`✅ Created ${treatmentData.length} non-pharmacological treatment records`);
-        }
-    }
-  } catch (e) {
-    console.warn('⚠️ Error seeding non-pharmacological treatments:', e);
-  }
-  // Llamar a la función para agregar más pacientes si es necesario
-  await seedAdditionalPatients();
-
 }
-
-/**
- * Asegura que todos los pacientes tengan un triaje asignado
- * Si falta triaje_level, asigna uno basado en su condición
- */
-async function ensureTriageAssignment() {
-  try {
-    console.log('🔍 Checking triage assignment for all patients...');
-    
-    // Obtener TODOS los pacientes
-    const allPatients = await db.select(
-      "SELECT id, name, condition, triage_level FROM patients ORDER BY id"
-    );
-    
-    console.log(`📊 Total patients in database: ${allPatients.length}`);
-    
-    // Mapeo de condiciones a triaje por defecto
-    const conditionToTriage = {
-      'Crítico': 'ROJO',
-      'Recuperación': 'VERDE',
-      'Estable': 'VERDE',
-      'En observación': 'AMARILLO',
-      'Delicado': 'AMARILLO',
-      'Grave': 'ROJO'
-    };
-    
-    // Verificar y asignar triaje
-    let assigned = 0;
-    let alreadyAssigned = 0;
-    
-    for (const patient of allPatients) {
-      if (!patient.triage_level || patient.triage_level.trim() === '') {
-        // Asignar triaje basado en condición
-        const triageLevel = conditionToTriage[patient.condition] || 'VERDE';
-        await db.execute(
-          "UPDATE patients SET triage_level = ? WHERE id = ?",
-          [triageLevel, patient.id]
-        );
-        assigned++;
-        console.log(`  ✅ Assigned ${triageLevel} to "${patient.name}" (condition: ${patient.condition})`);
-      } else {
-        alreadyAssigned++;
-        console.log(`  ✓ ${patient.name} already has ${patient.triage_level}`);
-      }
-    }
-    
-    console.log(`✅ Triage assignment complete: ${assigned} assigned, ${alreadyAssigned} already assigned`);
-    
-    if (allPatients.length === 0) {
-      console.log('⚠️ No patients found in database');
-    }
-  } catch (e) {
-    console.error('❌ Error ensuring triage assignment:', e);
-  }
-}
-
 
 // ========== FUNCIONES DE LECTURA (READ) ==========
 
@@ -1900,22 +1002,8 @@ export async function getNurseNoteById(noteId) {
   };
 }
 
-/**
- * Actualiza el estado de un paciente
- * 
- * IMPORTANTE: Esta función SOLO permite actualizar el campo 'condition'
- * El triaje (triage_level) NO puede ser modificado después del registro inicial
- * Los enfermeros NO tienen permiso para modificar el triaje de los pacientes
- * 
- * @param {number} id - ID del paciente
- * @param {Object} data - Datos a actualizar (solo se usa data.condition)
- * @returns {Promise<Array>} Lista actualizada de pacientes
- */
 export async function updatePatientDB(id, data) {
     const db = await initDatabase();
-    
-    // SOLO se permite actualizar el campo 'condition'
-    // El triaje está protegido y no se puede modificar
     await db.execute(
         `UPDATE patients SET condition = ? WHERE id = ?`,
         [data.condition, id]
@@ -3104,20 +2192,77 @@ export async function deactivateUser(userId) {
   }
 }
 
-// ========== FUNCIONES DE TRASLADOS - DESHABILITADAS ==========
-// ⚠️ IMPORTANTE: Las funciones de traslado han sido REMOVIDAS
-// Los enfermeros NO PUEDEN trasladar pacientes en este sistema.
-// Los traslados solo pueden registrarse a través de personal administrativo/médico.
-// El componente TransfersHistory.jsx solo permite VISUALIZAR traslados históricos (read-only)
-//
-// Razón: Los enfermeros no tienen autoridad médica para decidir traslados de pacientes.
-// Los traslados solo se realizan bajo orden médica explícita.
-// Las siguientes funciones han sido removidas:
-// - addPatientTransfer() - REMOVIDA
-// - getTransfersByPatientId() - REMOVIDA  
-// - getAllTransfers() - REMOVIDA
-// 
-// Para auditoría: Ver comentarios con "removed_function" si es necesario consultar código antiguo
+// ========== FUNCIONES DE TRASLADOS ==========
+
+/**
+ * Agrega un nuevo traslado de paciente
+ */
+export async function addPatientTransfer(transferData) {
+  const db = await initDatabase();
+  try {
+    await db.execute(
+      `INSERT INTO patient_transfers (
+        patient_id, from_floor, from_area, from_room, from_bed,
+        to_floor, to_area, to_room, to_bed,
+        transfer_date, transfer_time, reason, transferred_by, notes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        transferData.patient_id,
+        transferData.from_floor,
+        transferData.from_area,
+        transferData.from_room,
+        transferData.from_bed,
+        transferData.to_floor,
+        transferData.to_area,
+        transferData.to_room,
+        transferData.to_bed,
+        transferData.transfer_date,
+        transferData.transfer_time,
+        transferData.reason,
+        transferData.transferred_by,
+        transferData.notes || ''
+      ]
+    );
+    console.log(`✅ Traslado registrado para paciente ${transferData.patient_id}`);
+    return true;
+  } catch (error) {
+    console.error('Error al agregar traslado:', error);
+    throw error;
+  }
+}
+
+/**
+ * Obtiene todos los traslados de un paciente
+ */
+export async function getTransfersByPatientId(patientId) {
+  const db = await initDatabase();
+  try {
+    return await db.select(
+      `SELECT * FROM patient_transfers WHERE patient_id = ? ORDER BY transfer_date DESC`,
+      [patientId]
+    );
+  } catch (error) {
+    console.error('Error obteniendo traslados:', error);
+    return [];
+  }
+}
+
+/**
+ * Obtiene todos los traslados
+ */
+export async function getAllTransfers() {
+  const db = await initDatabase();
+  try {
+    return await db.select(
+      `SELECT pt.*, p.name as patient_name FROM patient_transfers pt
+       JOIN patients p ON pt.patient_id = p.id
+       ORDER BY pt.transfer_date DESC`
+    );
+  } catch (error) {
+    console.error('Error obteniendo traslados:', error);
+    return [];
+  }
+}
 
 // ========== FUNCIONES DE HORARIOS/SHIFTS ==========
 
@@ -3369,15 +2514,16 @@ export async function getNurseAssignedPatientsWithDetails(nurseId) {
         p.primary_doctor,
         p.diagnosis,
         p.status,
-        pa.assignment_date as assigned_at,
-        pa.shift_type,
-        pa.notes,
-        p.floor as room_floor,
-        p.area as room_area,
-        p.bed as bed_number
-      FROM patient_assignments pa
-      JOIN patients p ON pa.patient_id = p.id
-      WHERE pa.nurse_id = ? AND pa.status = 'Active'
+        npa.assigned_at,
+        npa.shift_type,
+        npa.notes,
+        r.floor as room_floor,
+        r.area as room_area,
+        r.bed_number
+      FROM nurse_patient_assignments npa
+      JOIN patients p ON npa.patient_id = p.id
+      LEFT JOIN rooms r ON p.room = r.room_number
+      WHERE npa.nurse_id = ? AND npa.status = 'active'
       ORDER BY p.room ASC
     `, [nurseId]);
   } catch (error) {
@@ -3800,56 +2946,3 @@ export async function validateMedicationStock(medicationId, quantity) {
     return { hasStock: false, reason: 'Error en validación de stock' };
   }
 }
-
-// --- PEGAR AL FINAL DE database.js ---
-
-// Helper para obtener la instancia de BD desde otros archivos (necesario para App.jsx)
-
-
-
-export async function seedAdditionalPatients() {
-  console.log('🏥 Ejecutando siembra complementaria de pacientes...');
-  const db = await initDatabase(); 
-
-  // 1. Verificar si ya tenemos suficientes pacientes para no duplicar infinitamente
-  const patientCount = await db.select("SELECT count(*) as count FROM patients");
-  
-  // Solo generamos si hay menos de 10 pacientes (ajusta este número si quieres más)
-  if (patientCount[0].count < 10) {
-      console.log('Generando pacientes adicionales asignados...');
-      
-      const names = ["Carlos", "Ana", "Miguel", "Sofia", "Luis", "Elena", "Pedro", "Carmen", "Jorge", "Lucia", "Raul", "Isabel"];
-      const lastNames = ["García", "Rodríguez", "López", "Martínez", "González", "Pérez", "Sánchez", "Romero"];
-      const conditions = ["Estable", "Delicado", "Grave", "Recuperación", "Crítico"];
-      const triages = ["VERDE", "AMARILLO", "ROJO"];
-      const rooms = ["301-A", "301-B", "302-A", "302-B", "303-A", "304-Urg", "305-Iso"];
-
-      for (let i = 0; i < 8; i++) { // Generar 8 pacientes nuevos
-          const name = `${names[Math.floor(Math.random() * names.length)]} ${lastNames[Math.floor(Math.random() * lastNames.length)]}`;
-          const age = Math.floor(Math.random() * 60) + 18;
-          // Generar CURP ficticio único
-          const curp = `NUEVO${(99-i).toString().padStart(2,'0')}0101H${Math.random().toString(36).substring(7).toUpperCase()}`;
-          const condition = conditions[Math.floor(Math.random() * conditions.length)];
-          const triage = triages[Math.floor(Math.random() * triages.length)];
-          const room = rooms[i % rooms.length];
-
-          // Insertar paciente
-          const result = await db.execute(`
-            INSERT INTO patients (name, age, curp, room, condition, triage_level, admission_date, blood_type, allergies, diagnosis) 
-            VALUES (?, ?, ?, ?, ?, ?, datetime('now', '-${i} days'), 'O+', 'Ninguna', 'Ingreso Automático')
-          `, [name, age, curp, room, condition, triage]);
-          
-          const newPatientId = result.lastInsertId;
-
-          // CRÍTICO: Asignar al enfermero ID 1 (Laura) y al ID 2 (por si usas otro usuario)
-          // Esto asegura que el paciente aparezca en tu lista
-          await db.execute(`
-            INSERT INTO patient_assignments (nurse_id, patient_id, assignment_date, shift_type, status, notes)
-            VALUES (1, ?, datetime('now'), 'Matutino', 'Active', 'Asignación automática')
-          `, [newPatientId]);
-      }
-      console.log('✅ Pacientes adicionales generados y asignados.');
-  }
-}
-
-

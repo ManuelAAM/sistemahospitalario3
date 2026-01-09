@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Package, Plus, AlertTriangle, Search, Filter, TrendingDown, 
-  Calendar, DollarSign, X, Edit, Save, RefreshCw, Activity,
+  Calendar, X, RefreshCw, Activity,
   AlertCircle, CheckCircle, Clock, Pill
 } from 'lucide-react';
 import {
@@ -24,8 +24,6 @@ export default function MedicationStockManager({ isOpen, onClose }) {
   const [filterLevel, setFilterLevel] = useState('ALL');
   const [showAddModal, setShowAddModal] = useState(false);
   const [stats, setStats] = useState(null);
-  const [editingId, setEditingId] = useState(null);
-  const [editStock, setEditStock] = useState('');
 
   // Cargar inventario
   useEffect(() => {
@@ -66,18 +64,7 @@ export default function MedicationStockManager({ isOpen, onClose }) {
     return filtered;
   }, [inventory, searchTerm, filterLevel]);
 
-  const handleUpdateStock = async (medicationId, newQuantity) => {
-    try {
-      const { updateMedicationStock } = await import('../services/database.js');
-      await updateMedicationStock(medicationId, parseInt(newQuantity));
-      await loadInventory();
-      setEditingId(null);
-      setEditStock('');
-    } catch (error) {
-      console.error('Error actualizando stock:', error);
-      alert('Error al actualizar stock');
-    }
-  };
+
 
   if (!isOpen) return null;
 
@@ -104,38 +91,14 @@ export default function MedicationStockManager({ isOpen, onClose }) {
             </button>
           </div>
 
-          {/* Estadísticas */}
+          {/* Estadísticas - Solo informativas, sin alertas */}
           {stats && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mt-6">
+            <div className="grid grid-cols-1 md:grid-cols-1 gap-4 mt-6">
               <StatCard
                 label="Total Medicamentos"
                 value={stats.total}
                 icon={Package}
                 color="blue"
-              />
-              <StatCard
-                label="Stock Crítico"
-                value={stats.critical}
-                icon={AlertTriangle}
-                color="red"
-              />
-              <StatCard
-                label="Stock Bajo"
-                value={stats.low}
-                icon={TrendingDown}
-                color="yellow"
-              />
-              <StatCard
-                label="Próximos a Vencer"
-                value={stats.nearExpiration}
-                icon={Calendar}
-                color="orange"
-              />
-              <StatCard
-                label="Valor Total"
-                value={`$${stats.totalValue.toLocaleString()}`}
-                icon={DollarSign}
-                color="green"
               />
             </div>
           )}
@@ -158,22 +121,6 @@ export default function MedicationStockManager({ isOpen, onClose }) {
               </div>
             </div>
 
-            {/* Filtro por nivel */}
-            <div className="flex items-center gap-2">
-              <Filter size={20} className="text-gray-600" />
-              <select
-                value={filterLevel}
-                onChange={(e) => setFilterLevel(e.target.value)}
-                className="px-4 py-2.5 border-2 border-gray-300 rounded-lg font-bold text-sm focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="ALL">Todos los niveles</option>
-                <option value="CRITICAL">🔴 Crítico</option>
-                <option value="LOW">🟡 Bajo</option>
-                <option value="NORMAL">🟢 Normal</option>
-                <option value="HIGH">🔵 Alto</option>
-              </select>
-            </div>
-
             {/* Botones de acción */}
             <button
               onClick={loadInventory}
@@ -181,14 +128,6 @@ export default function MedicationStockManager({ isOpen, onClose }) {
             >
               <RefreshCw size={18} />
               Actualizar
-            </button>
-
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="px-6 py-2.5 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition flex items-center gap-2 shadow-lg"
-            >
-              <Plus size={18} />
-              Nuevo Medicamento
             </button>
           </div>
         </div>
@@ -233,19 +172,12 @@ export default function MedicationStockManager({ isOpen, onClose }) {
                     <th className="px-4 py-3 text-center text-xs font-bold text-gray-600 uppercase">
                       Vencimiento
                     </th>
-                    <th className="px-4 py-3 text-center text-xs font-bold text-gray-600 uppercase">
-                      Precio
-                    </th>
-                    <th className="px-4 py-3 text-center text-xs font-bold text-gray-600 uppercase">
-                      Acciones
-                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200">
                   {filteredInventory.map((item) => {
                     const level = getStockLevel(item.quantity);
                     const levelInfo = getStockLevelInfo(level);
-                    const isEditing = editingId === item.id;
 
                     return (
                       <tr key={item.id} className="hover:bg-gray-50 transition">
@@ -269,19 +201,9 @@ export default function MedicationStockManager({ isOpen, onClose }) {
                           )}
                         </td>
                         <td className="px-4 py-3 text-center">
-                          {isEditing ? (
-                            <input
-                              type="number"
-                              value={editStock}
-                              onChange={(e) => setEditStock(e.target.value)}
-                              className="w-20 px-2 py-1 border-2 border-blue-500 rounded text-center font-bold"
-                              autoFocus
-                            />
-                          ) : (
-                            <span className="font-bold text-lg text-gray-800">
-                              {item.quantity}
-                            </span>
-                          )}
+                          <span className="font-bold text-lg text-gray-800">
+                            {item.quantity}
+                          </span>
                           <div className="text-xs text-gray-500 mt-1">{item.unit}</div>
                         </td>
                         <td className="px-4 py-3 text-center">
@@ -309,43 +231,7 @@ export default function MedicationStockManager({ isOpen, onClose }) {
                             <span className="text-gray-400">-</span>
                           )}
                         </td>
-                        <td className="px-4 py-3 text-center text-sm font-bold text-gray-700">
-                          ${item.unit_price?.toFixed(2) || '0.00'}
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          {isEditing ? (
-                            <div className="flex gap-1 justify-center">
-                              <button
-                                onClick={() => handleUpdateStock(item.id, editStock)}
-                                className="p-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                                title="Guardar"
-                              >
-                                <Save size={16} />
-                              </button>
-                              <button
-                                onClick={() => {
-                                  setEditingId(null);
-                                  setEditStock('');
-                                }}
-                                className="p-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-                                title="Cancelar"
-                              >
-                                <X size={16} />
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={() => {
-                                setEditingId(item.id);
-                                setEditStock(item.quantity.toString());
-                              }}
-                              className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                              title="Actualizar Stock"
-                            >
-                              <Edit size={16} />
-                            </button>
-                          )}
-                        </td>
+
                       </tr>
                     );
                   })}
@@ -363,17 +249,6 @@ export default function MedicationStockManager({ isOpen, onClose }) {
           </p>
         </div>
       </div>
-
-      {/* Modal de Agregar Medicamento */}
-      {showAddModal && (
-        <AddMedicationModal
-          onClose={() => setShowAddModal(false)}
-          onAdded={() => {
-            loadInventory();
-            setShowAddModal(false);
-          }}
-        />
-      )}
     </div>
   );
 }
